@@ -3,9 +3,9 @@
                     Ultra-Fast Desktop Search Utility
 ================================================================================
 
-Version : v0.2.0
+Version : v0.3.0
 Platform: Windows (x64)
-License : MIT License (see LICENSE)
+License : MIT License (see LICENSE.txt)
 Author  : levia (https://github.com/levialavender/magnolia)
 
 --------------------------------------------------------------------------------
@@ -38,8 +38,10 @@ instantaneous, real-time search across your storage drives.
   * Clean standalone GUI window with no background console/terminal tab.
   * Multi-column sorting: Click column headers (Name, Path, Size, Date Modified) 
     for instant sorting.
-  * Windows Explorer Integration: Click any file link to immediately open and 
-    highlight the item in Windows Explorer.
+- Windows Shell Integration:
+  * Left-Click: Instantly opens the file or folder using its registered system default handler.
+  * Right-Click: Summons the full native Windows Explorer context menu directly (Open, 
+    Edit, 7-Zip/WinRAR archive actions, Cut/Copy, Properties, etc.).
 
 --------------------------------------------------------------------------------
 3. HOW TO USE
@@ -49,13 +51,14 @@ instantaneous, real-time search across your storage drives.
 3. If running for the first time, allow the background indexer a brief moment 
    to catalog your drives. You can begin typing queries immediately.
 4. Type your query into the top search bar.
-5. Click on any file or folder in the results list to reveal and highlight it 
-   inside Windows Explorer.
+5. Left-click any file in the results list to open it directly with its default app.
+6. Right-click any file to bring up the full native Windows Explorer context menu.
 
 --------------------------------------------------------------------------------
-4. WHAT'S NEW IN v0.2.0
+4. WHAT'S NEW IN v0.3.0
 --------------------------------------------------------------------------------
-- Background terminal/console window has been completely removed (`windows_subsystem`).
-- Embedded custom app branding and icon (`.ico` resource & window viewport icon).
-- Standardized documentation and MIT license bundled with the release package.
+- Full Native Windows Explorer Context Menu on right-click (Shell IContextMenu integration).
+- Left-click directly launches the file with its associated system application.
+- High-Definition logo branding: Replaced application icon with high-resolution vector-rendered art.
+- License file converted to plain text format (`LICENSE.txt`) for immediate readability on Windows.
 ================================================================================

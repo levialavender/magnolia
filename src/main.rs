@@ -2,6 +2,7 @@
 
 use chrono::{DateTime, Local};
 use eframe::egui;
+use magnolia::context_menu::show_native_context_menu;
 use magnolia::db::{Database, FileEntry};
 use magnolia::ntfs::get_available_drives;
 use magnolia::query::{QueryEngine, QueryOptions};
@@ -350,10 +351,23 @@ impl eframe::App for MagnoliaApp {
                             let icon = if entry.is_dir { "📁 " } else { "📄 " };
                             ui.horizontal(|ui| {
                                 let name_text = format!("{}{}", icon, entry.name);
-                                if ui.link(name_text).clicked() {
-                                    let _ = open_in_explorer(&entry.path);
+                                let link_resp = ui.link(name_text);
+
+                                // Klik kiri: langsung buka file/folder sesuai asosiasi sistem
+                                if link_resp.clicked() {
+                                    let _ = open_file_default(&entry.path);
                                 }
-                                ui.label(&entry.path);
+
+                                // Klik kanan: munculkan context menu asli Windows Explorer
+                                if link_resp.secondary_clicked() {
+                                    show_native_context_menu(&entry.path);
+                                }
+
+                                let path_resp = ui.label(&entry.path);
+                                if path_resp.hover_pos().is_some() && path_resp.secondary_clicked() {
+                                    show_native_context_menu(&entry.path);
+                                }
+
                                 ui.label(format_size(entry.size, entry.is_dir));
                                 ui.label(format_timestamp(entry.modified));
                             });
@@ -364,6 +378,15 @@ impl eframe::App for MagnoliaApp {
     }
 }
 
+fn open_file_default(path: &str) -> std::io::Result<()> {
+    // Open file or folder with default registered system handler
+    std::process::Command::new("cmd")
+        .args(["/c", "start", "", path])
+        .spawn()?;
+    Ok(())
+}
+
+#[allow(dead_code)]
 fn open_in_explorer(path: &str) -> std::io::Result<()> {
     std::process::Command::new("explorer.exe")
         .arg(format!("/select,{}", path))

@@ -16,9 +16,10 @@ A blazing-fast, pure native desktop search utility built in **Rust** and powered
   - Regular expression (Regex) search toggle.
   - Case-sensitivity and path-matching switches.
 
-- **Clean Native UI**:
-  - Powered by `egui`/`eframe` running at full display refresh rate.
-  - Clickable file entries that open and highlight directly inside Windows Explorer.
+- **Clean Native UI & Shell Integration**:
+  - Powered by `egui`/`eframe` running at full display refresh rate with no background terminal window.
+  - Left-click directly launches the selected file or folder in its default registered application.
+  - Right-click invokes the full native Windows Explorer context menu (`IContextMenu`) with system handlers (Open, Edit, 7-Zip, WinRAR, Properties).
   - Instant sorting by Name, Path, File Size, and Date Modified.
   - Manual directory addition and whole-drive re-indexing capabilities.
 
@@ -51,4 +52,4 @@ cargo test
 - `src/main.rs`: Native desktop interface and event orchestration.
 
 ## License
-MIT
+MIT (see `LICENSE.txt`)
