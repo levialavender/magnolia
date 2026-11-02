@@ -379,10 +379,29 @@ impl eframe::App for MagnoliaApp {
 }
 
 fn open_file_default(path: &str) -> std::io::Result<()> {
-    // Open file or folder with default registered system handler
-    std::process::Command::new("cmd")
-        .args(["/c", "start", "", path])
-        .spawn()?;
+    // Open file or folder with ShellExecuteW directly: instant 0-delay and zero console window flash
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::Shell::ShellExecuteW;
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+    let wide_path: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
+    let wide_open: Vec<u16> = "open".encode_utf16().chain(std::iter::once(0)).collect();
+
+    unsafe {
+        let res = ShellExecuteW(
+            HWND(std::ptr::null_mut()),
+            PCWSTR(wide_open.as_ptr()),
+            PCWSTR(wide_path.as_ptr()),
+            PCWSTR(std::ptr::null()),
+            PCWSTR(std::ptr::null()),
+            SW_SHOWNORMAL,
+        );
+        if res.0 as usize <= 32 {
+            // Fallback to explorer if ShellExecuteW returns error code
+            let _ = open_in_explorer(path);
+        }
+    }
     Ok(())
 }
 
