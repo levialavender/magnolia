@@ -1,3 +1,5 @@
+#![windows_subsystem = "windows"]
+
 use chrono::{DateTime, Local};
 use eframe::egui;
 use magnolia::db::{Database, FileEntry};
@@ -10,12 +12,34 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
+fn load_app_icon() -> Option<egui::IconData> {
+    let png_bytes = include_bytes!("../assets/icon.png");
+    if let Ok(image) = image::load_from_memory(png_bytes) {
+        let image = image.to_rgba8();
+        let (width, height) = image.dimensions();
+        let rgba = image.into_raw();
+        Some(egui::IconData {
+            rgba,
+            width,
+            height,
+        })
+    } else {
+        None
+    }
+}
+
 fn main() -> eframe::Result<()> {
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_inner_size([950.0, 620.0])
+        .with_min_inner_size([500.0, 350.0])
+        .with_title("Magnolia");
+
+    if let Some(icon) = load_app_icon() {
+        viewport = viewport.with_icon(icon);
+    }
+
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([950.0, 620.0])
-            .with_min_inner_size([500.0, 350.0])
-            .with_title("Magnolia"),
+        viewport,
         ..Default::default()
     };
 
