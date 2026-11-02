@@ -2,7 +2,6 @@
 
 use chrono::{DateTime, Local};
 use eframe::egui;
-use magnolia::context_menu::show_native_context_menu;
 use magnolia::db::{Database, FileEntry};
 use magnolia::ntfs::get_available_drives;
 use magnolia::query::{QueryEngine, QueryOptions};
@@ -349,27 +348,64 @@ impl eframe::App for MagnoliaApp {
                     for row in row_range {
                         if let Some(entry) = self.matched_results.get(row) {
                             let icon = if entry.is_dir { "📁 " } else { "📄 " };
-                            ui.horizontal(|ui| {
-                                let name_text = format!("{}{}", icon, entry.name);
-                                let link_resp = ui.link(name_text);
+                            let name_text = format!("{}{}", icon, entry.name);
+                            let entry_path = entry.path.clone();
+                            let entry_name = entry.name.clone();
 
-                                // Klik kiri: langsung buka file/folder sesuai asosiasi sistem
-                                if link_resp.clicked() {
-                                    let _ = open_file_default(&entry.path);
+                            let mut row_rect = ui.available_rect_before_wrap();
+                            row_rect.set_height(row_height);
+
+                            let response = ui.allocate_rect(row_rect, egui::Sense::click());
+
+                            // Highlight baris saat hover
+                            if response.hovered() {
+                                ui.painter().rect_filled(
+                                    row_rect,
+                                    0.0,
+                                    ui.visuals().faint_bg_color,
+                                );
+                            }
+
+                            // Klik kiri: buka file langsung
+                            if response.clicked() {
+                                let _ = open_file_default(&entry_path);
+                            }
+
+                            // Built-in In-App Context Menu via egui (Dijamin 100% responsif & lancar)
+                            response.context_menu(|ui| {
+                                ui.set_min_width(180.0);
+                                if ui.button("🚀 Open File").clicked() {
+                                    let _ = open_file_default(&entry_path);
+                                    ui.close_menu();
                                 }
-
-                                // Klik kanan: munculkan context menu asli Windows Explorer
-                                if link_resp.secondary_clicked() {
-                                    show_native_context_menu(&entry.path);
+                                if ui.button("📁 Open in Explorer").clicked() {
+                                    let _ = open_in_explorer(&entry_path);
+                                    ui.close_menu();
                                 }
-
-                                let path_resp = ui.label(&entry.path);
-                                if path_resp.hover_pos().is_some() && path_resp.secondary_clicked() {
-                                    show_native_context_menu(&entry.path);
+                                ui.separator();
+                                if ui.button("📋 Copy Full Path").clicked() {
+                                    ui.output_mut(|o| o.copied_text = entry_path.clone());
+                                    ui.close_menu();
                                 }
+                                if ui.button("📄 Copy File Name").clicked() {
+                                    ui.output_mut(|o| o.copied_text = entry_name.clone());
+                                    ui.close_menu();
+                                }
+                                ui.separator();
+                                if ui.button("ℹ️ Properties").clicked() {
+                                    let _ = open_file_properties(&entry_path);
+                                    ui.close_menu();
+                                }
+                            });
 
-                                ui.label(format_size(entry.size, entry.is_dir));
-                                ui.label(format_timestamp(entry.modified));
+                            // Render elemen kolom di atas baris
+                            ui.allocate_new_ui(egui::UiBuilder::new().max_rect(row_rect), |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.add(egui::Label::new(&name_text).truncate());
+                                    ui.add(egui::Label::new(&entry.path).truncate());
+                                    ui.label(format_size(entry.size, entry.is_dir));
+                                    ui.label(format_timestamp(entry.modified));
+                                });
                             });
                         }
                     }
@@ -398,14 +434,34 @@ fn open_file_default(path: &str) -> std::io::Result<()> {
             SW_SHOWNORMAL,
         );
         if res.0 as usize <= 32 {
-            // Fallback to explorer if ShellExecuteW returns error code
             let _ = open_in_explorer(path);
         }
     }
     Ok(())
 }
 
-#[allow(dead_code)]
+fn open_file_properties(path: &str) -> std::io::Result<()> {
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::Shell::{ShellExecuteExW, SHELLEXECUTEINFOW, SEE_MASK_INVOKEIDLIST};
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOW;
+
+    let wide_path: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
+    let wide_verb: Vec<u16> = "properties".encode_utf16().chain(std::iter::once(0)).collect();
+
+    unsafe {
+        let mut info = SHELLEXECUTEINFOW::default();
+        info.cbSize = std::mem::size_of::<SHELLEXECUTEINFOW>() as u32;
+        info.fMask = SEE_MASK_INVOKEIDLIST;
+        info.hwnd = HWND(std::ptr::null_mut());
+        info.lpVerb = PCWSTR(wide_verb.as_ptr());
+        info.lpFile = PCWSTR(wide_path.as_ptr());
+        info.nShow = SW_SHOW.0;
+        let _ = ShellExecuteExW(&mut info);
+    }
+    Ok(())
+}
+
 fn open_in_explorer(path: &str) -> std::io::Result<()> {
     std::process::Command::new("explorer.exe")
         .arg(format!("/select,{}", path))
