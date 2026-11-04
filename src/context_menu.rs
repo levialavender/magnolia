@@ -7,7 +7,7 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Ole::{OleInitialize, OleUninitialize};
 use windows::Win32::UI::Shell::{
     BHID_SFUIObject, CMINVOKECOMMANDINFO, IContextMenu, IContextMenu2, IContextMenu3, IShellItem,
-    SHCreateItemFromParsingName, CMF_EXPLORE, CMF_NORMAL,
+    SHCreateItemFromParsingName, CMF_EXPLORE, CMF_NORMAL, GCS_VERBA,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow, GetCursorPos,
@@ -45,7 +45,10 @@ unsafe extern "system" fn menu_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lp
     DefWindowProcW(hwnd, msg, wparam, lparam)
 }
 
-pub fn show_native_context_menu<P: AsRef<Path>>(file_path: P) {
+pub fn show_native_context_menu<P: AsRef<Path>, F: FnOnce() + Send + 'static>(
+    file_path: P,
+    on_rename: F,
+) {
     let path = file_path.as_ref();
     let path_str = path.to_string_lossy();
     let wide_path: Vec<u16> = path_str.encode_utf16().chain(std::iter::once(0)).collect();
@@ -127,13 +130,33 @@ pub fn show_native_context_menu<P: AsRef<Path>>(file_path: P) {
                         let _ = PostMessageW(thread_hwnd, WM_NULL, None, None);
 
                         if cmd.0 > 0 {
-                            let mut invoke_info = CMINVOKECOMMANDINFO::default();
-                            invoke_info.cbSize = std::mem::size_of::<CMINVOKECOMMANDINFO>() as u32;
-                            invoke_info.fMask = 0;
-                            invoke_info.hwnd = main_hwnd;
-                            invoke_info.lpVerb = windows::core::PCSTR((cmd.0 - 1) as usize as *const u8);
-                            invoke_info.nShow = 1;
-                            let _ = context_menu.InvokeCommand(&invoke_info);
+                            let mut buf = [0u8; 64];
+                            let is_rename = context_menu
+                                .GetCommandString(
+                                    (cmd.0 - 1) as usize,
+                                    GCS_VERBA,
+                                    None,
+                                    windows::core::PSTR(buf.as_mut_ptr()),
+                                    buf.len() as u32,
+                                )
+                                .ok()
+                                .map(|_| {
+                                    let s = windows::core::PCSTR(buf.as_ptr()).to_string().unwrap_or_default();
+                                    s.eq_ignore_ascii_case("rename")
+                                })
+                                .unwrap_or(false);
+
+                            if is_rename {
+                                on_rename();
+                            } else {
+                                let mut invoke_info = CMINVOKECOMMANDINFO::default();
+                                invoke_info.cbSize = std::mem::size_of::<CMINVOKECOMMANDINFO>() as u32;
+                                invoke_info.fMask = 0;
+                                invoke_info.hwnd = main_hwnd;
+                                invoke_info.lpVerb = windows::core::PCSTR((cmd.0 - 1) as usize as *const u8);
+                                invoke_info.nShow = 1;
+                                let _ = context_menu.InvokeCommand(&invoke_info);
+                            }
                         }
                         let _ = DestroyMenu(hmenu);
                     }

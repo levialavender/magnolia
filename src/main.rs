@@ -52,11 +52,11 @@ fn main() -> eframe::Result<()> {
     )
 }
 
-struct RenameDialogState {
+struct InlineRenameState {
     entry_id: u64,
     old_full_path: String,
     new_name: String,
-    error_msg: Option<String>,
+    initial_focus: bool,
 }
 
 struct MagnoliaApp {
@@ -77,7 +77,9 @@ struct MagnoliaApp {
     col_width_path: f32,
     col_width_size: f32,
     col_width_date: f32,
-    rename_modal: Option<RenameDialogState>,
+    rename_tx: std::sync::mpsc::Sender<u64>,
+    rename_rx: std::sync::mpsc::Receiver<u64>,
+    inline_rename: Option<InlineRenameState>,
 }
 
 #[derive(PartialEq, Eq, Clone, Copy)]
@@ -103,6 +105,7 @@ impl MagnoliaApp {
         let count = db_arc.lock().unwrap().len();
 
         let (fs_tx, fs_rx) = std::sync::mpsc::channel();
+        let (rename_tx, rename_rx) = std::sync::mpsc::channel();
         let watcher_stop = Arc::new(AtomicBool::new(false));
 
         let drives = get_available_drives();
@@ -133,7 +136,9 @@ impl MagnoliaApp {
             col_width_path: 380.0,
             col_width_size: 90.0,
             col_width_date: 150.0,
-            rename_modal: None,
+            rename_tx,
+            rename_rx,
+            inline_rename: None,
         };
 
         app.update_search();
@@ -406,6 +411,21 @@ impl eframe::App for MagnoliaApp {
             ctx.request_repaint();
         }
 
+        while let Ok(id) = self.rename_rx.try_recv() {
+            let db = self.db.lock().unwrap();
+            if let Some(e) = db.entries.iter().find(|e| e.id == id) {
+                let full_p = db.get_full_path(e);
+                self.inline_rename = Some(InlineRenameState {
+                    entry_id: id,
+                    old_full_path: full_p,
+                    new_name: e.name.clone(),
+                    initial_focus: true,
+                });
+                self.selected_id = Some(id);
+                ctx.request_repaint();
+            }
+        }
+
         egui::TopBottomPanel::top("top_bar").show(ctx, |ui| {
             ui.add_space(6.0);
             ui.horizontal(|ui| {
@@ -547,6 +567,8 @@ impl eframe::App for MagnoliaApp {
             }
 
             let mut clicked_id = None;
+            let mut commit_rename = None;
+            let mut cancel_rename = false;
 
             egui::ScrollArea::vertical()
                 .auto_shrink([false; 2])
@@ -556,6 +578,7 @@ impl eframe::App for MagnoliaApp {
                         if let Some(&idx) = self.matched_results.get(row) {
                             if let Some(entry) = db_guard.entries.get(idx) {
                                 let entry_id = entry.id;
+                                let is_renaming = self.inline_rename.as_ref().map(|s| s.entry_id) == Some(entry_id);
                                 let ext_key = if entry.is_dir {
                                     "__folder__".to_string()
                                 } else {
@@ -622,17 +645,74 @@ impl eframe::App for MagnoliaApp {
                                             egui::Color32::WHITE,
                                         );
                                     }
-                                    let name_clip = egui::Rect::from_min_max(
-                                        egui::pos2(name_rect.min.x + 24.0, name_rect.min.y),
-                                        egui::pos2(name_rect.max.x - 4.0, name_rect.max.y),
-                                    );
-                                    ui.painter().with_clip_rect(name_clip).text(
-                                        egui::pos2(name_rect.min.x + 24.0, name_rect.center().y),
-                                        egui::Align2::LEFT_CENTER,
-                                        &entry_name,
-                                        egui::FontId::proportional(13.0),
-                                        text_color,
-                                    );
+
+                                    if is_renaming {
+                                        if let Some(ref mut r_state) = self.inline_rename {
+                                            let text_id = egui::Id::new("inline_rename_edit").with(entry_id);
+                                            if r_state.initial_focus {
+                                                let stem_len = r_state.new_name.rfind('.').unwrap_or(r_state.new_name.len());
+                                                if let Some(mut state) = egui::TextEdit::load_state(ctx, text_id) {
+                                                    state.cursor.set_char_range(Some(egui::text::CCursorRange::two(
+                                                        egui::text::CCursor::new(0),
+                                                        egui::text::CCursor::new(stem_len),
+                                                    )));
+                                                    state.store(ctx, text_id);
+                                                }
+                                            }
+
+                                            let edit_x = name_rect.min.x + 22.0;
+                                            let edit_w = (self.col_width_name - 26.0).max(180.0);
+                                            let edit_rect = egui::Rect::from_min_size(
+                                                egui::pos2(edit_x, name_rect.min.y + 1.0),
+                                                egui::vec2(edit_w, row_height - 2.0),
+                                            );
+
+                                            let mut edit_ui = ui.new_child(
+                                                egui::UiBuilder::new()
+                                                    .max_rect(edit_rect)
+                                                    .layout(egui::Layout::left_to_right(egui::Align::Center)),
+                                            );
+
+                                            edit_ui.painter().rect_filled(edit_rect, 0.0, egui::Color32::WHITE);
+                                            edit_ui.painter().rect_stroke(
+                                                edit_rect,
+                                                0.0,
+                                                egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(0, 120, 215)),
+                                            );
+
+                                            let text_edit = egui::TextEdit::singleline(&mut r_state.new_name)
+                                                .id(text_id)
+                                                .font(egui::FontId::proportional(13.0))
+                                                .text_color(egui::Color32::BLACK)
+                                                .margin(egui::vec2(3.0, 1.0))
+                                                .desired_width(edit_w);
+
+                                            let te_resp = edit_ui.add(text_edit);
+
+                                            if r_state.initial_focus {
+                                                te_resp.request_focus();
+                                                r_state.initial_focus = false;
+                                            }
+
+                                            if te_resp.lost_focus() && ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
+                                                commit_rename = Some((entry_id, r_state.old_full_path.clone(), r_state.new_name.clone()));
+                                            } else if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+                                                cancel_rename = true;
+                                            }
+                                        }
+                                    } else {
+                                        let name_clip = egui::Rect::from_min_max(
+                                            egui::pos2(name_rect.min.x + 24.0, name_rect.min.y),
+                                            egui::pos2(name_rect.max.x - 4.0, name_rect.max.y),
+                                        );
+                                        ui.painter().with_clip_rect(name_clip).text(
+                                            egui::pos2(name_rect.min.x + 24.0, name_rect.center().y),
+                                            egui::Align2::LEFT_CENTER,
+                                            &entry_name,
+                                            egui::FontId::proportional(13.0),
+                                            text_color,
+                                        );
+                                    }
 
                                     // Spacer 6.0px persis sejajar divider header
                                     ui.allocate_exact_size(egui::vec2(6.0, row_height), egui::Sense::hover());
@@ -697,21 +777,26 @@ impl eframe::App for MagnoliaApp {
                                     name_resp | path_resp | size_resp | date_resp
                                 }).inner;
 
-                                if row_resp.clicked() {
-                                    clicked_id = Some(entry_id);
-                                    // Klik satu kali: seleksi baris saja
-                                }
+                                if !is_renaming {
+                                    if row_resp.clicked() {
+                                        clicked_id = Some(entry_id);
+                                        // Klik satu kali: seleksi baris saja
+                                    }
 
-                                if row_resp.double_clicked() {
-                                    clicked_id = Some(entry_id);
-                                    // Klik dua kali: buka file langsung
-                                    let _ = open_file_default(&entry_path);
-                                }
+                                    if row_resp.double_clicked() {
+                                        clicked_id = Some(entry_id);
+                                        // Klik dua kali: buka file langsung
+                                        let _ = open_file_default(&entry_path);
+                                    }
 
-                                if row_resp.secondary_clicked() {
-                                    clicked_id = Some(entry_id);
-                                    // Klik kanan: langsung buka Windows Explorer Context Menu (IContextMenu/2/3)
-                                    magnolia::context_menu::show_native_context_menu(&entry_path);
+                                    if row_resp.secondary_clicked() {
+                                        clicked_id = Some(entry_id);
+                                        // Klik kanan: buka Windows Explorer Context Menu asli (IContextMenu)
+                                        let tx = self.rename_tx.clone();
+                                        magnolia::context_menu::show_native_context_menu(&entry_path, move || {
+                                            let _ = tx.send(entry_id);
+                                        });
+                                    }
                                 }
                             }
                         }
@@ -728,81 +813,35 @@ impl eframe::App for MagnoliaApp {
                     let db_guard = self.db.lock().unwrap();
                     if let Some(entry) = db_guard.entries.iter().find(|e| e.id == id) {
                         let full_p = db_guard.get_full_path(entry);
-                        self.rename_modal = Some(RenameDialogState {
+                        self.inline_rename = Some(InlineRenameState {
                             entry_id: id,
                             old_full_path: full_p,
                             new_name: entry.name.clone(),
-                            error_msg: None,
+                            initial_focus: true,
                         });
                     }
                 }
             }
-        });
 
-        if let Some(mut state) = self.rename_modal.take() {
-            let mut should_cancel = false;
-            let mut should_rename = false;
-
-            egui::Window::new("✏️ Rename File")
-                .collapsible(false)
-                .resizable(false)
-                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
-                .show(ctx, |ui| {
-                    ui.add_space(4.0);
-                    ui.label(egui::RichText::new(format!("Path: {}", state.old_full_path)).weak());
-                    ui.add_space(6.0);
-
-                    ui.horizontal(|ui| {
-                        ui.label("New Name:");
-                        let text_resp = ui.add(
-                            egui::TextEdit::singleline(&mut state.new_name)
-                                .desired_width(320.0),
-                        );
-                        if text_resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                            should_rename = true;
-                        }
-                    });
-
-                    if let Some(ref err) = state.error_msg {
-                        ui.add_space(4.0);
-                        ui.colored_label(egui::Color32::from_rgb(255, 80, 80), err);
-                    }
-
-                    ui.add_space(8.0);
-                    ui.horizontal(|ui| {
-                        if ui.button("💾 Save").clicked() {
-                            should_rename = true;
-                        }
-                        if ui.button("Cancel").clicked() {
-                            should_cancel = true;
-                        }
-                    });
-                });
-
-            if should_rename {
-                let old_p = std::path::PathBuf::from(&state.old_full_path);
+            if let Some((id, old_full_p, new_n)) = commit_rename {
+                let old_p = std::path::PathBuf::from(&old_full_p);
                 if let Some(parent) = old_p.parent() {
-                    let new_p = parent.join(&state.new_name);
-                    match std::fs::rename(&old_p, &new_p) {
-                        Ok(()) => {
-                            {
-                                let mut db = self.db.lock().unwrap();
-                                if let Some(e) = db.entries.iter_mut().find(|e| e.id == state.entry_id) {
-                                    e.name = state.new_name.clone();
-                                }
+                    let new_p = parent.join(&new_n);
+                    if new_p != old_p && !new_n.trim().is_empty() {
+                        if let Ok(()) = std::fs::rename(&old_p, &new_p) {
+                            let mut db = self.db.lock().unwrap();
+                            if let Some(e) = db.entries.iter_mut().find(|e| e.id == id) {
+                                e.name = new_n;
                             }
-                            self.update_search();
-                        }
-                        Err(e) => {
-                            state.error_msg = Some(format!("Rename failed: {}", e));
-                            self.rename_modal = Some(state);
                         }
                     }
                 }
-            } else if !should_cancel {
-                self.rename_modal = Some(state);
+                self.inline_rename = None;
+                self.update_search();
+            } else if cancel_rename {
+                self.inline_rename = None;
             }
-        }
+        });
     }
 }
 
