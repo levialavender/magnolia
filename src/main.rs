@@ -673,17 +673,17 @@ impl eframe::App for MagnoliaApp {
                                                     .layout(egui::Layout::left_to_right(egui::Align::Center)),
                                             );
 
-                                            edit_ui.painter().rect_filled(edit_rect, 0.0, egui::Color32::WHITE);
+                                            edit_ui.painter().rect_filled(edit_rect, 1.0, egui::Color32::from_rgb(28, 28, 28));
                                             edit_ui.painter().rect_stroke(
                                                 edit_rect,
-                                                0.0,
-                                                egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(0, 120, 215)),
+                                                1.0,
+                                                egui::Stroke::new(1.5_f32, egui::Color32::from_rgb(0, 120, 215)),
                                             );
 
                                             let text_edit = egui::TextEdit::singleline(&mut r_state.new_name)
                                                 .id(text_id)
                                                 .font(egui::FontId::proportional(13.0))
-                                                .text_color(egui::Color32::BLACK)
+                                                .text_color(egui::Color32::WHITE)
                                                 .margin(egui::vec2(3.0, 1.0))
                                                 .desired_width(edit_w);
 

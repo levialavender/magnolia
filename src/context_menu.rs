@@ -7,7 +7,7 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Ole::{OleInitialize, OleUninitialize};
 use windows::Win32::UI::Shell::{
     BHID_SFUIObject, CMINVOKECOMMANDINFO, IContextMenu, IContextMenu2, IContextMenu3, IShellItem,
-    SHCreateItemFromParsingName, CMF_EXPLORE, CMF_NORMAL, GCS_VERBA,
+    SHCreateItemFromParsingName, CMF_CANRENAME, CMF_EXPLORE, CMF_NORMAL, GCS_VERBA,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow, GetCursorPos,
@@ -112,7 +112,7 @@ pub fn show_native_context_menu<P: AsRef<Path>, F: FnOnce() + Send + 'static>(
 
                 if let Ok(hmenu) = CreatePopupMenu() {
                     if !hmenu.is_invalid() {
-                        let flags = CMF_NORMAL | CMF_EXPLORE;
+                        let flags = CMF_NORMAL | CMF_EXPLORE | CMF_CANRENAME;
                         let _ = context_menu.QueryContextMenu(hmenu, 0, 1, 0x7FFF, flags);
 
                         let _ = SetForegroundWindow(thread_hwnd);
