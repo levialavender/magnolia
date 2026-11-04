@@ -65,6 +65,7 @@ struct MagnoliaApp {
     selected_id: Option<u64>,
     fs_rx: std::sync::mpsc::Receiver<FileSystemChange>,
     _watcher_stop: Arc<AtomicBool>,
+    icon_cache: std::collections::HashMap<String, egui::TextureHandle>,
 }
 
 #[derive(PartialEq, Eq, Clone, Copy)]
@@ -115,6 +116,7 @@ impl MagnoliaApp {
             selected_id: None,
             fs_rx,
             _watcher_stop: watcher_stop,
+            icon_cache: std::collections::HashMap::new(),
         };
 
         app.update_search();
@@ -462,6 +464,37 @@ impl eframe::App for MagnoliaApp {
 
             ui.separator();
 
+            // Pre-cache Windows icons for visible rows
+            {
+                let db_guard = self.db.lock().unwrap();
+                for &idx in self.matched_results.iter().take(200) {
+                    if let Some(entry) = db_guard.entries.get(idx) {
+                        let ext_key = if entry.is_dir {
+                            "__folder__".to_string()
+                        } else {
+                            std::path::Path::new(&entry.name)
+                                .extension()
+                                .and_then(|e| e.to_str())
+                                .map(|e| e.to_lowercase())
+                                .unwrap_or_else(|| "__file__".to_string())
+                        };
+
+                        if !self.icon_cache.contains_key(&ext_key) {
+                            let hicon = magnolia::icon::get_windows_icon(entry.is_dir, &ext_key);
+                            let img = hicon
+                                .and_then(|h| magnolia::icon::hicon_to_color_image(h, 16, 16))
+                                .unwrap_or_else(|| magnolia::icon::get_fallback_icon(entry.is_dir));
+                            let tex = ctx.load_texture(
+                                format!("win_icon_{}", ext_key),
+                                img,
+                                egui::TextureOptions::default(),
+                            );
+                            self.icon_cache.insert(ext_key, tex);
+                        }
+                    }
+                }
+            }
+
             let mut clicked_id = None;
 
             egui::ScrollArea::vertical()
@@ -472,8 +505,16 @@ impl eframe::App for MagnoliaApp {
                         if let Some(&idx) = self.matched_results.get(row) {
                             if let Some(entry) = db_guard.entries.get(idx) {
                                 let entry_id = entry.id;
-                                let icon = if entry.is_dir { "📁 " } else { "📄 " };
-                                let name_text = format!("{}{}", icon, entry.name);
+                                let ext_key = if entry.is_dir {
+                                    "__folder__".to_string()
+                                } else {
+                                    std::path::Path::new(&entry.name)
+                                        .extension()
+                                        .and_then(|e| e.to_str())
+                                        .map(|e| e.to_lowercase())
+                                        .unwrap_or_else(|| "__file__".to_string())
+                                };
+
                                 let entry_path = db_guard.get_full_path(entry);
                                 let entry_name = entry.name.clone();
                                 let size_text = format_size(entry.size, entry.is_dir);
@@ -506,16 +547,36 @@ impl eframe::App for MagnoliaApp {
                                     ui.visuals().text_color()
                                 };
 
+                                let icon_tex = self.icon_cache.get(&ext_key).or_else(|| {
+                                    self.icon_cache.get(if entry.is_dir { "__folder__" } else { "__file__" })
+                                });
+
                                 let row_resp = ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing.x = spacing;
-                                    let name_resp = ui.add_sized(
-                                        [name_width, row_height],
-                                        egui::Label::new(
-                                            egui::RichText::new(&name_text).color(text_color),
-                                        )
-                                        .sense(egui::Sense::click())
-                                        .truncate(),
-                                    );
+                                    let name_resp = ui.allocate_ui_with_layout(
+                                        egui::vec2(name_width, row_height),
+                                        egui::Layout::left_to_right(egui::Align::Center),
+                                        |ui| {
+                                            ui.spacing_mut().item_spacing.x = 6.0;
+                                            let img_resp = if let Some(tex) = icon_tex {
+                                                ui.add(
+                                                    egui::Image::new((tex.id(), egui::vec2(16.0, 16.0)))
+                                                        .sense(egui::Sense::click()),
+                                                )
+                                            } else {
+                                                ui.allocate_response(egui::vec2(16.0, 16.0), egui::Sense::hover())
+                                            };
+                                            let label_resp = ui.add(
+                                                egui::Label::new(
+                                                    egui::RichText::new(&entry_name).color(text_color),
+                                                )
+                                                .sense(egui::Sense::click())
+                                                .truncate(),
+                                            );
+                                            img_resp | label_resp
+                                        },
+                                    ).inner;
+
                                     let path_resp = ui.add_sized(
                                         [path_width, row_height],
                                         egui::Label::new(
@@ -543,6 +604,12 @@ impl eframe::App for MagnoliaApp {
 
                                 if row_resp.clicked() {
                                     clicked_id = Some(entry_id);
+                                    // Klik satu kali: seleksi baris saja
+                                }
+
+                                if row_resp.double_clicked() {
+                                    clicked_id = Some(entry_id);
+                                    // Klik dua kali: buka file langsung
                                     let _ = open_file_default(&entry_path);
                                 }
 
@@ -687,3 +754,8 @@ fn dirs_or_local() -> PathBuf {
         PathBuf::from(".")
     }
 }
+
+
+
+
+
