@@ -52,6 +52,13 @@ fn main() -> eframe::Result<()> {
     )
 }
 
+struct RenameDialogState {
+    entry_id: u64,
+    old_full_path: String,
+    new_name: String,
+    error_msg: Option<String>,
+}
+
 struct MagnoliaApp {
     db: Arc<Mutex<Database>>,
     search_query: String,
@@ -70,6 +77,7 @@ struct MagnoliaApp {
     col_width_path: f32,
     col_width_size: f32,
     col_width_date: f32,
+    rename_modal: Option<RenameDialogState>,
 }
 
 #[derive(PartialEq, Eq, Clone, Copy)]
@@ -125,6 +133,7 @@ impl MagnoliaApp {
             col_width_path: 380.0,
             col_width_size: 90.0,
             col_width_date: 150.0,
+            rename_modal: None,
         };
 
         app.update_search();
@@ -538,6 +547,7 @@ impl eframe::App for MagnoliaApp {
             }
 
             let mut clicked_id = None;
+            let mut rename_request = None;
 
             egui::ScrollArea::vertical()
                 .auto_shrink([false; 2])
@@ -613,20 +623,16 @@ impl eframe::App for MagnoliaApp {
                                             egui::Color32::WHITE,
                                         );
                                     }
-                                    let name_label_rect = egui::Rect::from_min_max(
+                                    let name_clip = egui::Rect::from_min_max(
                                         egui::pos2(name_rect.min.x + 24.0, name_rect.min.y),
-                                        name_rect.max,
+                                        egui::pos2(name_rect.max.x - 4.0, name_rect.max.y),
                                     );
-                                    ui.allocate_new_ui(
-                                        egui::UiBuilder::new().max_rect(name_label_rect),
-                                        |ui| {
-                                            ui.add(
-                                                egui::Label::new(
-                                                    egui::RichText::new(&entry_name).color(text_color),
-                                                )
-                                                .truncate(),
-                                            );
-                                        },
+                                    ui.painter().with_clip_rect(name_clip).text(
+                                        egui::pos2(name_rect.min.x + 24.0, name_rect.center().y),
+                                        egui::Align2::LEFT_CENTER,
+                                        &entry_name,
+                                        egui::FontId::proportional(13.0),
+                                        text_color,
                                     );
 
                                     // Spacer 6.0px persis sejajar divider header
@@ -637,20 +643,16 @@ impl eframe::App for MagnoliaApp {
                                         egui::vec2(self.col_width_path, row_height),
                                         egui::Sense::click(),
                                     );
-                                    let path_label_rect = egui::Rect::from_min_max(
+                                    let path_clip = egui::Rect::from_min_max(
                                         egui::pos2(path_rect.min.x + 4.0, path_rect.min.y),
-                                        path_rect.max,
+                                        egui::pos2(path_rect.max.x - 4.0, path_rect.max.y),
                                     );
-                                    ui.allocate_new_ui(
-                                        egui::UiBuilder::new().max_rect(path_label_rect),
-                                        |ui| {
-                                            ui.add(
-                                                egui::Label::new(
-                                                    egui::RichText::new(&entry_path).color(text_color),
-                                                )
-                                                .truncate(),
-                                            );
-                                        },
+                                    ui.painter().with_clip_rect(path_clip).text(
+                                        egui::pos2(path_rect.min.x + 4.0, path_rect.center().y),
+                                        egui::Align2::LEFT_CENTER,
+                                        &entry_path,
+                                        egui::FontId::proportional(13.0),
+                                        text_color,
                                     );
 
                                     // Spacer 6.0px
@@ -661,20 +663,16 @@ impl eframe::App for MagnoliaApp {
                                         egui::vec2(self.col_width_size, row_height),
                                         egui::Sense::click(),
                                     );
-                                    let size_label_rect = egui::Rect::from_min_max(
+                                    let size_clip = egui::Rect::from_min_max(
                                         egui::pos2(size_rect.min.x + 4.0, size_rect.min.y),
-                                        size_rect.max,
+                                        egui::pos2(size_rect.max.x - 4.0, size_rect.max.y),
                                     );
-                                    ui.allocate_new_ui(
-                                        egui::UiBuilder::new().max_rect(size_label_rect),
-                                        |ui| {
-                                            ui.add(
-                                                egui::Label::new(
-                                                    egui::RichText::new(&size_text).color(text_color),
-                                                )
-                                                .truncate(),
-                                            );
-                                        },
+                                    ui.painter().with_clip_rect(size_clip).text(
+                                        egui::pos2(size_rect.min.x + 4.0, size_rect.center().y),
+                                        egui::Align2::LEFT_CENTER,
+                                        &size_text,
+                                        egui::FontId::proportional(13.0),
+                                        text_color,
                                     );
 
                                     // Spacer 6.0px
@@ -685,20 +683,16 @@ impl eframe::App for MagnoliaApp {
                                         egui::vec2(self.col_width_date, row_height),
                                         egui::Sense::click(),
                                     );
-                                    let date_label_rect = egui::Rect::from_min_max(
+                                    let date_clip = egui::Rect::from_min_max(
                                         egui::pos2(date_rect.min.x + 4.0, date_rect.min.y),
-                                        date_rect.max,
+                                        egui::pos2(date_rect.max.x - 4.0, date_rect.max.y),
                                     );
-                                    ui.allocate_new_ui(
-                                        egui::UiBuilder::new().max_rect(date_label_rect),
-                                        |ui| {
-                                            ui.add(
-                                                egui::Label::new(
-                                                    egui::RichText::new(&date_text).color(text_color),
-                                                )
-                                                .truncate(),
-                                            );
-                                        },
+                                    ui.painter().with_clip_rect(date_clip).text(
+                                        egui::pos2(date_rect.min.x + 4.0, date_rect.center().y),
+                                        egui::Align2::LEFT_CENTER,
+                                        &date_text,
+                                        egui::FontId::proportional(13.0),
+                                        text_color,
                                     );
 
                                     name_resp | path_resp | size_resp | date_resp
@@ -731,6 +725,10 @@ impl eframe::App for MagnoliaApp {
                                         ui.close_menu();
                                     }
                                     ui.separator();
+                                    if ui.button("✏️ Rename").clicked() {
+                                        rename_request = Some((entry_id, entry_path.clone(), entry_name.clone()));
+                                        ui.close_menu();
+                                    }
                                     if ui.button("📋 Copy Full Path").clicked() {
                                         ui.output_mut(|o| o.copied_text = entry_path.clone());
                                         ui.close_menu();
@@ -757,7 +755,81 @@ impl eframe::App for MagnoliaApp {
             if let Some(id) = clicked_id {
                 self.selected_id = Some(id);
             }
+
+            if let Some((id, path, name)) = rename_request {
+                self.rename_modal = Some(RenameDialogState {
+                    entry_id: id,
+                    old_full_path: path,
+                    new_name: name,
+                    error_msg: None,
+                });
+            }
         });
+
+        if let Some(mut state) = self.rename_modal.take() {
+            let mut should_cancel = false;
+            let mut should_rename = false;
+
+            egui::Window::new("✏️ Rename File")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+                .show(ctx, |ui| {
+                    ui.add_space(4.0);
+                    ui.label(egui::RichText::new(format!("Path: {}", state.old_full_path)).weak());
+                    ui.add_space(6.0);
+
+                    ui.horizontal(|ui| {
+                        ui.label("New Name:");
+                        let text_resp = ui.add(
+                            egui::TextEdit::singleline(&mut state.new_name)
+                                .desired_width(320.0),
+                        );
+                        if text_resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                            should_rename = true;
+                        }
+                    });
+
+                    if let Some(ref err) = state.error_msg {
+                        ui.add_space(4.0);
+                        ui.colored_label(egui::Color32::from_rgb(255, 80, 80), err);
+                    }
+
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        if ui.button("💾 Save").clicked() {
+                            should_rename = true;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            should_cancel = true;
+                        }
+                    });
+                });
+
+            if should_rename {
+                let old_p = std::path::PathBuf::from(&state.old_full_path);
+                if let Some(parent) = old_p.parent() {
+                    let new_p = parent.join(&state.new_name);
+                    match std::fs::rename(&old_p, &new_p) {
+                        Ok(()) => {
+                            {
+                                let mut db = self.db.lock().unwrap();
+                                if let Some(e) = db.entries.iter_mut().find(|e| e.id == state.entry_id) {
+                                    e.name = state.new_name.clone();
+                                }
+                            }
+                            self.update_search();
+                        }
+                        Err(e) => {
+                            state.error_msg = Some(format!("Rename failed: {}", e));
+                            self.rename_modal = Some(state);
+                        }
+                    }
+                }
+            } else if !should_cancel {
+                self.rename_modal = Some(state);
+            }
+        }
     }
 }
 
@@ -882,6 +954,8 @@ fn dirs_or_local() -> PathBuf {
         PathBuf::from(".")
     }
 }
+
+
 
 
 
