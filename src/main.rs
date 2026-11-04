@@ -380,60 +380,68 @@ impl eframe::App for MagnoliaApp {
                             let entry_path = entry.path.clone();
                             let entry_name = entry.name.clone();
 
-                            let mut row_rect = ui.available_rect_before_wrap();
-                            row_rect.set_height(row_height);
+                            ui.horizontal(|ui| {
+                                let link_resp = ui.link(name_text);
 
-                            let response = ui.allocate_rect(row_rect, egui::Sense::click());
-
-                            // Highlight baris saat hover
-                            if response.hovered() {
-                                ui.painter().rect_filled(
-                                    row_rect,
-                                    0.0,
-                                    ui.visuals().faint_bg_color,
-                                );
-                            }
-
-                            // Klik kiri: buka file langsung
-                            if response.clicked() {
-                                let _ = open_file_default(&entry_path);
-                            }
-
-                            // Built-in In-App Context Menu via egui (Dijamin 100% responsif & lancar)
-                            response.context_menu(|ui| {
-                                ui.set_min_width(180.0);
-                                if ui.button("🚀 Open File").clicked() {
+                                if link_resp.clicked() {
                                     let _ = open_file_default(&entry_path);
-                                    ui.close_menu();
                                 }
-                                if ui.button("📁 Open in Explorer").clicked() {
-                                    let _ = open_in_explorer(&entry_path);
-                                    ui.close_menu();
-                                }
-                                ui.separator();
-                                if ui.button("📋 Copy Full Path").clicked() {
-                                    ui.output_mut(|o| o.copied_text = entry_path.clone());
-                                    ui.close_menu();
-                                }
-                                if ui.button("📄 Copy File Name").clicked() {
-                                    ui.output_mut(|o| o.copied_text = entry_name.clone());
-                                    ui.close_menu();
-                                }
-                                ui.separator();
-                                if ui.button("ℹ️ Properties").clicked() {
-                                    let _ = open_file_properties(&entry_path);
-                                    ui.close_menu();
-                                }
-                            });
 
-                            // Render elemen kolom di atas baris
-                            ui.allocate_new_ui(egui::UiBuilder::new().max_rect(row_rect), |ui| {
-                                ui.horizontal(|ui| {
-                                    ui.add(egui::Label::new(&name_text).truncate());
-                                    ui.add(egui::Label::new(&entry.path).truncate());
-                                    ui.label(format_size(entry.size, entry.is_dir));
-                                    ui.label(format_timestamp(entry.modified));
+                                link_resp.context_menu(|ui| {
+                                    ui.set_min_width(180.0);
+                                    if ui.button("🚀 Open File").clicked() {
+                                        let _ = open_file_default(&entry_path);
+                                        ui.close_menu();
+                                    }
+                                    if ui.button("📁 Open in Explorer").clicked() {
+                                        let _ = open_in_explorer(&entry_path);
+                                        ui.close_menu();
+                                    }
+                                    ui.separator();
+                                    if ui.button("📋 Copy Full Path").clicked() {
+                                        ui.output_mut(|o| o.copied_text = entry_path.clone());
+                                        ui.close_menu();
+                                    }
+                                    if ui.button("📄 Copy File Name").clicked() {
+                                        ui.output_mut(|o| o.copied_text = entry_name.clone());
+                                        ui.close_menu();
+                                    }
+                                    ui.separator();
+                                    if ui.button("ℹ️ Properties").clicked() {
+                                        let _ = open_file_properties(&entry_path);
+                                        ui.close_menu();
+                                    }
                                 });
+
+                                let path_resp = ui.label(&entry.path);
+                                path_resp.context_menu(|ui| {
+                                    ui.set_min_width(180.0);
+                                    if ui.button("🚀 Open File").clicked() {
+                                        let _ = open_file_default(&entry_path);
+                                        ui.close_menu();
+                                    }
+                                    if ui.button("📁 Open in Explorer").clicked() {
+                                        let _ = open_in_explorer(&entry_path);
+                                        ui.close_menu();
+                                    }
+                                    ui.separator();
+                                    if ui.button("📋 Copy Full Path").clicked() {
+                                        ui.output_mut(|o| o.copied_text = entry_path.clone());
+                                        ui.close_menu();
+                                    }
+                                    if ui.button("📄 Copy File Name").clicked() {
+                                        ui.output_mut(|o| o.copied_text = entry_name.clone());
+                                        ui.close_menu();
+                                    }
+                                    ui.separator();
+                                    if ui.button("ℹ️ Properties").clicked() {
+                                        let _ = open_file_properties(&entry_path);
+                                        ui.close_menu();
+                                    }
+                                });
+
+                                ui.label(format_size(entry.size, entry.is_dir));
+                                ui.label(format_timestamp(entry.modified));
                             });
                         }
                     }
