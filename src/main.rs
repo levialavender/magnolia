@@ -48,7 +48,10 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "Magnolia",
         options,
-        Box::new(|_cc| Ok(Box::new(MagnoliaApp::new()))),
+        Box::new(|cc| {
+            cc.egui_ctx.style_mut(|s| s.animation_time = 0.0);
+            Ok(Box::new(MagnoliaApp::new()))
+        }),
     )
 }
 
@@ -572,6 +575,7 @@ impl eframe::App for MagnoliaApp {
 
             egui::ScrollArea::vertical()
                 .auto_shrink([false; 2])
+                .animated(false)
                 .show_rows(ui, row_height, total_rows, |ui, row_range| {
                     let db_guard = self.db.lock().unwrap();
                     for row in row_range {
