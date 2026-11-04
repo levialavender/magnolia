@@ -64,17 +64,26 @@ impl QueryEngine {
         }
     }
 
-    pub fn matches(&self, entry: &FileEntry) -> bool {
+    pub fn matches(&self, entry: &FileEntry, folder_path: &str) -> bool {
         if self.raw_query.trim().is_empty() {
             return true;
         }
 
-        let target = if self.options.match_path {
-            &entry.path
+        if self.options.match_path {
+            let target = if folder_path.is_empty() {
+                entry.name.clone()
+            } else if folder_path.ends_with('\\') || folder_path.ends_with('/') {
+                format!("{}{}", folder_path, entry.name)
+            } else {
+                format!("{}\\{}", folder_path, entry.name)
+            };
+            self.test_target(&target)
         } else {
-            &entry.name
-        };
+            self.test_target(&entry.name)
+        }
+    }
 
+    fn test_target(&self, target: &str) -> bool {
         if self.options.regex {
             if let Some(ref re) = self.regex_matcher {
                 return re.is_match(target);
@@ -149,12 +158,12 @@ mod tests {
         let entry = FileEntry {
             id: 1,
             name: "My_Test_File.txt".to_string(),
-            path: "C:\\My_Test_File.txt".to_string(),
+            parent_id: 0,
             size: 10,
             is_dir: false,
             modified: 0,
         };
-        assert!(q.matches(&entry));
+        assert!(q.matches(&entry, "C:\\"));
     }
 
     #[test]
@@ -163,7 +172,7 @@ mod tests {
         let entry1 = FileEntry {
             id: 1,
             name: "test.txt".to_string(),
-            path: "C:\\test.txt".to_string(),
+            parent_id: 0,
             size: 10,
             is_dir: false,
             modified: 0,
@@ -171,13 +180,13 @@ mod tests {
         let entry2 = FileEntry {
             id: 2,
             name: "test.doc".to_string(),
-            path: "C:\\test.doc".to_string(),
+            parent_id: 0,
             size: 10,
             is_dir: false,
             modified: 0,
         };
-        assert!(q.matches(&entry1));
-        assert!(!q.matches(&entry2));
+        assert!(q.matches(&entry1, "C:\\"));
+        assert!(!q.matches(&entry2, "C:\\"));
     }
 
     #[test]
@@ -186,7 +195,7 @@ mod tests {
         let entry1 = FileEntry {
             id: 1,
             name: "main.rs".to_string(),
-            path: "C:\\main.rs".to_string(),
+            parent_id: 0,
             size: 10,
             is_dir: false,
             modified: 0,
@@ -194,12 +203,12 @@ mod tests {
         let entry2 = FileEntry {
             id: 2,
             name: "main.c".to_string(),
-            path: "C:\\main.c".to_string(),
+            parent_id: 0,
             size: 10,
             is_dir: false,
             modified: 0,
         };
-        assert!(q.matches(&entry1));
-        assert!(!q.matches(&entry2));
+        assert!(q.matches(&entry1, "C:\\"));
+        assert!(!q.matches(&entry2, "C:\\"));
     }
 }

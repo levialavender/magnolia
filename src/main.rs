@@ -3,9 +3,9 @@
 use chrono::{DateTime, Local};
 use eframe::egui;
 use magnolia::db::Database;
-use magnolia::ntfs::get_available_drives;
+use magnolia::ntfs::{get_available_drives, scan_mft};
 use magnolia::query::{QueryEngine, QueryOptions};
-use magnolia::scanner::scan_directory;
+use magnolia::scanner::scan_directory_fast;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -125,25 +125,33 @@ impl MagnoliaApp {
 
         thread::spawn(move || {
             let drives = get_available_drives();
-            let buffer = Arc::new(Mutex::new(Vec::new()));
+            let mut all_batches = Vec::new();
 
-            for drive in drives {
+            for &drive in &drives {
                 if stop_flag.load(Ordering::Relaxed) {
                     break;
                 }
-                let root = PathBuf::from(format!("{}:\\", drive));
-                if root.exists() {
-                    let buf_inner = buffer.clone();
-                    scan_directory(root, stop_flag.clone(), move |entry| {
-                        buf_inner.lock().unwrap().push(entry);
-                    });
+                // Coba pembacaan MFT langsung (super cepat jika elevated Admin)
+                match scan_mft(drive, stop_flag.clone()) {
+                    Ok(batch) => {
+                        all_batches.push(batch);
+                    }
+                    Err(_) => {
+                        // Fallback cepat: parallel drive traversal
+                        let root = PathBuf::from(format!("{}:\\", drive));
+                        if root.exists() {
+                            let batch = scan_directory_fast(root, stop_flag.clone());
+                            all_batches.push(batch);
+                        }
+                    }
                 }
             }
 
-            let entries = std::mem::take(&mut *buffer.lock().unwrap());
             {
                 let mut db = db_clone.lock().unwrap();
-                db.add_batch(entries);
+                for batch in all_batches {
+                    db.add_batch(batch.folders, batch.entries);
+                }
                 db.deduplicate();
                 let _ = db.save_to_file(&save_path);
             }
@@ -160,7 +168,10 @@ impl MagnoliaApp {
             .entries
             .iter()
             .enumerate()
-            .filter(|(_, e)| q_engine.matches(e))
+            .filter(|(_, e)| {
+                let folder = db_guard.get_folder(e.parent_id);
+                q_engine.matches(e, folder)
+            })
             .take(5000)
             .map(|(i, _)| i)
             .collect();
@@ -186,17 +197,19 @@ impl MagnoliaApp {
             SortColumn::Path => {
                 if self.sort_asc {
                     results.sort_by(|&a, &b| {
-                        db_guard.entries[a]
-                            .path
-                            .to_lowercase()
-                            .cmp(&db_guard.entries[b].path.to_lowercase())
+                        let fa = db_guard.get_folder(db_guard.entries[a].parent_id);
+                        let fb = db_guard.get_folder(db_guard.entries[b].parent_id);
+                        fa.to_lowercase().cmp(&fb.to_lowercase()).then_with(|| {
+                            db_guard.entries[a].name.to_lowercase().cmp(&db_guard.entries[b].name.to_lowercase())
+                        })
                     });
                 } else {
                     results.sort_by(|&a, &b| {
-                        db_guard.entries[b]
-                            .path
-                            .to_lowercase()
-                            .cmp(&db_guard.entries[a].path.to_lowercase())
+                        let fa = db_guard.get_folder(db_guard.entries[a].parent_id);
+                        let fb = db_guard.get_folder(db_guard.entries[b].parent_id);
+                        fb.to_lowercase().cmp(&fa.to_lowercase()).then_with(|| {
+                            db_guard.entries[b].name.to_lowercase().cmp(&db_guard.entries[a].name.to_lowercase())
+                        })
                     });
                 }
             }
@@ -236,20 +249,11 @@ impl MagnoliaApp {
         let save_path = self.db_file_path.clone();
 
         thread::spawn(move || {
-            let buffer = Arc::new(Mutex::new(Vec::new()));
-            let buffer_inner = buffer.clone();
-
-            scan_directory(folder, stop_flag, move |entry| {
-                let mut b = buffer_inner.lock().unwrap();
-                b.push(entry);
-            });
-
-            let entries = std::mem::take(&mut *buffer.lock().unwrap());
+            let batch = scan_directory_fast(folder, stop_flag);
             {
                 let mut db = db_clone.lock().unwrap();
-                for e in entries {
-                    db.add(e);
-                }
+                db.add_batch(batch.folders, batch.entries);
+                db.deduplicate();
                 let _ = db.save_to_file(&save_path);
             }
 
@@ -382,7 +386,7 @@ impl eframe::App for MagnoliaApp {
                                 let entry_id = entry.id;
                                 let icon = if entry.is_dir { "📁 " } else { "📄 " };
                                 let name_text = format!("{}{}", icon, entry.name);
-                                let entry_path = entry.path.clone();
+                                let entry_path = db_guard.get_full_path(entry);
                                 let entry_name = entry.name.clone();
                                 let size_text = format_size(entry.size, entry.is_dir);
                                 let date_text = format_timestamp(entry.modified);
