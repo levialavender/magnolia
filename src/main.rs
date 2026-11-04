@@ -3,9 +3,10 @@
 use chrono::{DateTime, Local};
 use eframe::egui;
 use magnolia::db::{Database, FileEntry};
-use magnolia::ntfs::{get_available_drives, UsnChange, UsnMonitor};
+use magnolia::ntfs::get_available_drives;
 use magnolia::query::{QueryEngine, QueryOptions};
 use magnolia::scanner::scan_directory;
+use magnolia::watcher::DriveWatcher;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -105,8 +106,8 @@ impl MagnoliaApp {
 
         app.update_search();
 
-        // Start Real-Time USN Journal Background Watcher
-        app.start_usn_watcher();
+        // Start Real-Time Live Watcher for all available drives
+        app.start_live_watchers();
 
         // Otomatis index semua drive jika database kosong saat pertama kali dibuka
         if count == 0 {
@@ -116,53 +117,19 @@ impl MagnoliaApp {
         app
     }
 
-    fn start_usn_watcher(&self) {
-        let db_clone = self.db.clone();
-        let changed_flag = self.db_changed_flag.clone();
-        let save_path = self.db_file_path.clone();
-
-        thread::spawn(move || {
-            let drives = get_available_drives();
-            let mut monitors: Vec<UsnMonitor> = drives
-                .into_iter()
-                .filter_map(|d| UsnMonitor::new(d).ok())
-                .collect();
-
-            if monitors.is_empty() {
-                return;
+    fn start_live_watchers(&self) {
+        let drives = get_available_drives();
+        for drive in drives {
+            let root = PathBuf::from(format!("{}:\\", drive));
+            if root.exists() {
+                let watcher = DriveWatcher::new(
+                    root,
+                    self.db.clone(),
+                    self.db_changed_flag.clone(),
+                );
+                watcher.start();
             }
-
-            loop {
-                thread::sleep(Duration::from_millis(1500));
-                let mut has_changes = false;
-
-                for monitor in &mut monitors {
-                    if let Ok(changes) = monitor.read_recent_changes() {
-                        if !changes.is_empty() {
-                            let mut db = db_clone.lock().unwrap();
-                            for change in changes {
-                                match change {
-                                    UsnChange::Removed(name) => {
-                                        let name_lower = name.to_lowercase();
-                                        db.entries.retain(|e| e.name.to_lowercase() != name_lower);
-                                        has_changes = true;
-                                    }
-                                    UsnChange::AddedOrModified(_name) => {
-                                        has_changes = true;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if has_changes {
-                    changed_flag.store(true, Ordering::Relaxed);
-                    let db = db_clone.lock().unwrap();
-                    let _ = db.save_to_file(&save_path);
-                }
-            }
-        });
+        }
     }
 
     fn trigger_scan_all_drives(&mut self) {
