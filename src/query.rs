@@ -91,29 +91,88 @@ impl QueryEngine {
             return false;
         }
 
-        let haystack = if self.options.case_sensitive {
-            target.to_string()
+        if self.options.case_sensitive {
+            for term in &self.terms {
+                if term.starts_with('!') {
+                    let neg_term = &term[1..];
+                    if !neg_term.is_empty() && target.contains(neg_term) {
+                        return false;
+                    }
+                } else if term.contains('*') || term.contains('?') {
+                    if !wildcard_match(term, target) {
+                        return false;
+                    }
+                } else if !target.contains(term) {
+                    return false;
+                }
+            }
         } else {
-            target.to_lowercase()
-        };
-
-        for term in &self.terms {
-            if term.starts_with('!') {
-                let neg_term = &term[1..];
-                if !neg_term.is_empty() && haystack.contains(neg_term) {
+            for term in &self.terms {
+                if term.starts_with('!') {
+                    let neg_term = &term[1..];
+                    if !neg_term.is_empty() && contains_ignore_case(target, neg_term) {
+                        return false;
+                    }
+                } else if term.contains('*') || term.contains('?') {
+                    if !wildcard_match_ignore_case(term, target) {
+                        return false;
+                    }
+                } else if !contains_ignore_case(target, term) {
                     return false;
                 }
-            } else if term.contains('*') || term.contains('?') {
-                if !wildcard_match(term, &haystack) {
-                    return false;
-                }
-            } else if !haystack.contains(term) {
-                return false;
             }
         }
 
         true
     }
+}
+
+#[inline]
+pub fn contains_ignore_case(haystack: &str, needle_lower: &str) -> bool {
+    if needle_lower.is_empty() {
+        return true;
+    }
+    if haystack.len() < needle_lower.len() {
+        return false;
+    }
+    let h_bytes = haystack.as_bytes();
+    let n_bytes = needle_lower.as_bytes();
+    h_bytes.windows(n_bytes.len()).any(|window| {
+        window.iter().zip(n_bytes.iter()).all(|(&h, &n)| h.to_ascii_lowercase() == n)
+    })
+}
+
+#[inline]
+pub fn wildcard_match_ignore_case(pattern_lower: &str, text: &str) -> bool {
+    let p_chars: Vec<char> = pattern_lower.chars().collect();
+    let t_chars: Vec<char> = text.chars().map(|c| c.to_ascii_lowercase()).collect();
+    let mut p = 0;
+    let mut t = 0;
+    let mut star_p = None;
+    let mut match_t = 0;
+
+    while t < t_chars.len() {
+        if p < p_chars.len() && (p_chars[p] == '?' || p_chars[p] == t_chars[t]) {
+            p += 1;
+            t += 1;
+        } else if p < p_chars.len() && p_chars[p] == '*' {
+            star_p = Some(p);
+            p += 1;
+            match_t = t;
+        } else if let Some(sp) = star_p {
+            p = sp + 1;
+            match_t += 1;
+            t = match_t;
+        } else {
+            return false;
+        }
+    }
+
+    while p < p_chars.len() && p_chars[p] == '*' {
+        p += 1;
+    }
+
+    p == p_chars.len()
 }
 
 fn wildcard_match(pattern: &str, text: &str) -> bool {

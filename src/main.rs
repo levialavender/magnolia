@@ -179,33 +179,63 @@ impl MagnoliaApp {
         let q_engine = QueryEngine::new(&self.search_query, self.options.clone());
         let db_guard = self.db.lock().unwrap();
 
-        let mut results: Vec<usize> = db_guard
-            .entries
-            .iter()
-            .enumerate()
-            .filter(|(_, e)| {
+        let entries = &db_guard.entries;
+        let n_threads = 4;
+        let chunk_size = (entries.len() + n_threads - 1).max(1) / n_threads;
+
+        let mut results: Vec<usize> = Vec::new();
+        if chunk_size > 0 && entries.len() > 1000 {
+            std::thread::scope(|s| {
+                let mut handles = Vec::new();
+                for (t_idx, chunk) in entries.chunks(chunk_size).enumerate() {
+                    let offset = t_idx * chunk_size;
+                    let q = &q_engine;
+                    let db = &db_guard;
+                    let handle = s.spawn(move || {
+                        let mut matched = Vec::new();
+                        for (i, e) in chunk.iter().enumerate() {
+                            let folder = db.get_folder(e.parent_id);
+                            if q.matches(e, folder) {
+                                matched.push(offset + i);
+                                if matched.len() >= 1000 {
+                                    break;
+                                }
+                            }
+                        }
+                        matched
+                    });
+                    handles.push(handle);
+                }
+                for h in handles {
+                    if let Ok(matched) = h.join() {
+                        results.extend(matched);
+                        if results.len() >= 2000 {
+                            break;
+                        }
+                    }
+                }
+            });
+        } else {
+            for (i, e) in entries.iter().enumerate() {
                 let folder = db_guard.get_folder(e.parent_id);
-                q_engine.matches(e, folder)
-            })
-            .take(5000)
-            .map(|(i, _)| i)
-            .collect();
+                if q_engine.matches(e, folder) {
+                    results.push(i);
+                    if results.len() >= 2000 {
+                        break;
+                    }
+                }
+            }
+        }
 
         match self.sort_column {
             SortColumn::Name => {
                 if self.sort_asc {
                     results.sort_by(|&a, &b| {
-                        db_guard.entries[a]
-                            .name
-                            .to_lowercase()
-                            .cmp(&db_guard.entries[b].name.to_lowercase())
+                        db_guard.entries[a].name.cmp(&db_guard.entries[b].name)
                     });
                 } else {
                     results.sort_by(|&a, &b| {
-                        db_guard.entries[b]
-                            .name
-                            .to_lowercase()
-                            .cmp(&db_guard.entries[a].name.to_lowercase())
+                        db_guard.entries[b].name.cmp(&db_guard.entries[a].name)
                     });
                 }
             }
@@ -214,16 +244,16 @@ impl MagnoliaApp {
                     results.sort_by(|&a, &b| {
                         let fa = db_guard.get_folder(db_guard.entries[a].parent_id);
                         let fb = db_guard.get_folder(db_guard.entries[b].parent_id);
-                        fa.to_lowercase().cmp(&fb.to_lowercase()).then_with(|| {
-                            db_guard.entries[a].name.to_lowercase().cmp(&db_guard.entries[b].name.to_lowercase())
+                        fa.cmp(fb).then_with(|| {
+                            db_guard.entries[a].name.cmp(&db_guard.entries[b].name)
                         })
                     });
                 } else {
                     results.sort_by(|&a, &b| {
                         let fa = db_guard.get_folder(db_guard.entries[a].parent_id);
                         let fb = db_guard.get_folder(db_guard.entries[b].parent_id);
-                        fb.to_lowercase().cmp(&fa.to_lowercase()).then_with(|| {
-                            db_guard.entries[b].name.to_lowercase().cmp(&db_guard.entries[a].name.to_lowercase())
+                        fb.cmp(fa).then_with(|| {
+                            db_guard.entries[b].name.cmp(&db_guard.entries[a].name)
                         })
                     });
                 }
