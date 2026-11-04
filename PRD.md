@@ -11,7 +11,7 @@ Default operating system search tools (such as Windows Search Indexer) frequentl
 2. **Slow Initial & Ongoing Indexing:** Traditional recursive folder crawling can take hours or even days to index modern multi-terabyte drives with millions of files.
 3. **Sluggish, Non-Instantaneous Results:** Search UI latency, unwanted web search redirection (e.g. Bing integration), and failure to find low-level developer or system files immediately.
 
-Magnolia solves these challenges by adopting an industry-proven in-memory architecture inspired by high-performance indexers (such as Voidtools Everything):
+Magnolia solves these challenges by adopting an industry-proven in-memory architecture:
 * **Exclusive Metadata Indexing:** Focuses purely on file and directory names, hierarchy, file sizes, and timestamps—completely bypassing expensive file content parsing.
 * **Direct NTFS Master File Table (MFT) Enumeration:** Enumerates entire NTFS disk volumes (hundreds of thousands of files) in 1–2 seconds via low-level Win32 IOCTL calls.
 * **Zero-Allocation Search Engine:** Keystroke search queries execute against in-memory slices without allocating heap strings per frame.

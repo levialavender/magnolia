@@ -18,42 +18,34 @@ Built with **Rust** and powered by **egui** (GPU hardware-accelerated, zero-brow
 
 ## Overview
 
-**Magnolia** is designed as a modern, bloat-free local desktop search engine inspired by the proven architecture of Voidtools *Everything*. Unlike built-in OS search tools that index heavy document contents and cause background disk thrashing, Magnolia focuses exclusively on file and folder metadata (names, paths, sizes, and timestamps).
-
-By reading the **NTFS Master File Table (MFT)** directly and maintaining a compact in-memory database, Magnolia indexes entire storage drives containing millions of files in mere seconds and provides instantaneous, zero-latency keystroke search results.
+**Magnolia** is a modern, lightweight desktop search utility designed for instant local file discovery on Windows. By focusing purely on file and folder metadata (names, paths, sizes, and timestamps) rather than parsing heavy document contents, Magnolia eliminates background disk thrashing, minimises memory overhead, and delivers search results with sub-millisecond responsiveness.
 
 ---
 
 ## Key Features
 
-### ⚡ Blazing-Fast Indexing & Low Memory Footprint
-- **Direct NTFS MFT Enumeration:** Leverages low-level Win32 IOCTL calls (`FSCTL_ENUM_USN_DATA`) to enumerate full NTFS drive volumes (~1.5+ million files) in **1–2 seconds** when running elevated.
-- **High-Speed Parallel Crawler Fallback:** Automatically switches to a concurrent multi-threaded DFS directory crawler across all physical drives when running without administrator privileges.
-- **Compact Parent-ID Architecture:** Saves up to **80% RAM** compared to traditional indexers by deduplicating directory strings into a unified folder dictionary (`folder_paths`), storing only 4-byte `parent_id` references per file.
-- **Atomic Disk Persistence:** Serializes database state to `%APPDATA%\Magnolia\magnolia.db` via `bincode` with atomic swap safety (`.db.tmp` swap) for instantaneous cold startup.
+### ⚡ Rapid Indexing & Low Resource Usage
+- **High-Speed Drive Indexing:** Rapidly catalogs local storage volumes and millions of files in seconds upon launch.
+- **Optimised Memory Footprint:** Efficient in-memory data structures keep RAM consumption low even across large file collections.
+- **Persistent Cache:** Safely stores indexed metadata locally for instantaneous ready states on every startup.
 
-### 🔍 Advanced Instant Search Engine
-- **Zero-Allocation Keystroke Search:** Uses ASCII byte-slice matching (`contains_ignore_case`) executed in parallel across 4 worker threads—delivering sub-15ms query evaluations without heap memory churn.
-- **Negation Filtering:** Prefix any keyword with `!` to exclude unwanted terms (e.g., `project !node_modules` or `document !backup`).
-- **Wildcard Matching:** Full native support for wildcard asterisk `*` (zero or more characters) and question mark `?` (single character) without regex overhead (e.g., `*.rs` or `report_202?.*`).
-- **Regular Expressions (Regex):** One-click toggle for full PCRE-compliant regex matching.
-- **Match Case & Match Path Switches:** Easily filter case-sensitively or expand queries across full directory path hierarchies.
+### 🔍 Instant Keystroke Search
+- **Real-Time Keystroke Response:** Displays matching results instantly as you type with zero noticeable latency.
+- **Flexible Query Filters:** Supports substring search, exclusion/negation filters (`!term`), and wildcard pattern matching (`*` and `?`).
+- **Search Toggles:** Built-in switches for regular expressions (Regex), case sensitivity, and full-path matching.
 
-### 🪟 Authentic Windows Shell Integration
-- **Native Windows Explorer Context Menu (`IContextMenu`):** Right-clicking any item summons the genuine Windows Explorer context menu (Open, Edit, 7-Zip, WinRAR, Delete, Properties, etc.) via a dedicated STA thread hosting a custom hidden message pump window supporting `IContextMenu2` and `IContextMenu3`.
-- **Inline In-Place Renaming:** Press <kbd>F2</kbd> or choose **Rename** from the native context menu to edit file names directly within the table row. Automatically highlights the filename stem while preserving the extension. Press <kbd>Enter</kbd> or click outside to commit; press <kbd>Escape</kbd> to cancel.
-- **Native "Open in Explorer":** Automatically opens File Explorer, scrolls to the file, and selects/highlights it natively using Win32 `SHOpenFolderAndSelectItems`.
-- **Direct File Launch:** Double-click any row to open the file or folder immediately with its registered system default handler via Win32 `ShellExecuteW`.
-- **Genuine Windows Shell Icons:** Automatically renders authentic 16×16 system icons for folders and file types extracted via Win32 `SHGetFileInfoW` and GDI.
+### 🪟 Windows Shell Integration
+- **Native Explorer Context Menu:** Right-click any item to summon the authentic Windows context menu with all system and third-party options.
+- **Inline In-Place Renaming:** Rename files and folders directly inside the results table with automatic file extension preservation.
+- **Open in Explorer:** Reveal, select, and automatically scroll to any target file directly inside Windows File Explorer.
+- **Direct File Launch:** Double-click any row to open the file or folder immediately in its default registered application.
+- **System File Icons:** Automatically renders authentic Windows icons corresponding to each file type and folder.
 
-### 🖥️ Native GPU-Accelerated UI
-- **Zero-Browser Overhead:** Pure native Windows binary compiled with `#![windows_subsystem = "windows"]` (zero console window flash, zero Electron/Chromium bloat).
-- **Interactive Resizable Columns:** Drag 6px column dividers with native `ResizeColumn` cursors to customize Name, Path, Size, and Date Modified widths in real time.
-- **Pixel-Perfect Alignment:** Consistent, clean left-aligned presentation across all column headers and cells.
-- **Instant Non-Animated Scrolling:** Easing and smooth scroll animations are strictly disabled (`.animated(false)`, `animation_time = 0.0`) for crisp, instant scrollwheel response.
-- **Real-Time Filesystem Monitoring:**
-  - **NTFS USN Change Journal:** Background poller tracking file additions, renames, and deletions in real time at 0.0% CPU overhead.
-  - **Downloads Watcher:** Automatically monitors `%USERPROFILE%\Downloads` to display completed browser downloads instantly.
+### 🖥️ Clean Native Interface
+- **Lightweight Desktop UI:** Hardware-accelerated native interface with zero webview or browser dependencies.
+- **Customisable Columns:** Drag column dividers to adjust Name, Path, Size, and Date Modified widths freely in real time.
+- **Instant Scrolling:** Crisp, responsive table navigation without animated easing delays.
+- **Live File Tracking:** Automatically detects newly added, renamed, or downloaded files in the background.
 
 ---
 
