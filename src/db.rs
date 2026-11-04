@@ -48,6 +48,9 @@ impl Database {
         let encoded = bincode::serialize(self)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
         std::fs::write(&tmp_path, encoded)?;
+        if path.exists() {
+            let _ = std::fs::remove_file(path);
+        }
         std::fs::rename(tmp_path, path)?;
         Ok(())
     }
@@ -115,6 +118,8 @@ mod tests {
             is_dir: false,
             modified: 999,
         });
+        db.save_to_file(&tmp).unwrap();
+        // Test overwrite save on existing file
         db.save_to_file(&tmp).unwrap();
         let loaded = Database::load_from_file(&tmp).unwrap();
         assert_eq!(loaded.len(), 1);

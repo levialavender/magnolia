@@ -2,7 +2,7 @@
 
 use chrono::{DateTime, Local};
 use eframe::egui;
-use magnolia::db::{Database, FileEntry};
+use magnolia::db::Database;
 use magnolia::ntfs::get_available_drives;
 use magnolia::query::{QueryEngine, QueryOptions};
 use magnolia::scanner::scan_directory;
@@ -54,12 +54,13 @@ struct MagnoliaApp {
     db: Arc<Mutex<Database>>,
     search_query: String,
     options: QueryOptions,
-    matched_results: Vec<FileEntry>,
+    matched_results: Vec<usize>,
     status_text: String,
     is_scanning: Arc<AtomicBool>,
     db_file_path: PathBuf,
     sort_column: SortColumn,
     sort_asc: bool,
+    selected_id: Option<u64>,
 }
 
 #[derive(PartialEq, Eq, Clone, Copy)]
@@ -98,6 +99,7 @@ impl MagnoliaApp {
             db_file_path,
             sort_column: SortColumn::Name,
             sort_asc: true,
+            selected_id: None,
         };
 
         app.update_search();
@@ -154,41 +156,62 @@ impl MagnoliaApp {
         let q_engine = QueryEngine::new(&self.search_query, self.options.clone());
         let db_guard = self.db.lock().unwrap();
 
-        let mut results: Vec<FileEntry> = db_guard
+        let mut results: Vec<usize> = db_guard
             .entries
             .iter()
-            .filter(|e| q_engine.matches(e))
+            .enumerate()
+            .filter(|(_, e)| q_engine.matches(e))
             .take(5000)
-            .cloned()
+            .map(|(i, _)| i)
             .collect();
 
         match self.sort_column {
             SortColumn::Name => {
                 if self.sort_asc {
-                    results.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+                    results.sort_by(|&a, &b| {
+                        db_guard.entries[a]
+                            .name
+                            .to_lowercase()
+                            .cmp(&db_guard.entries[b].name.to_lowercase())
+                    });
                 } else {
-                    results.sort_by(|a, b| b.name.to_lowercase().cmp(&a.name.to_lowercase()));
+                    results.sort_by(|&a, &b| {
+                        db_guard.entries[b]
+                            .name
+                            .to_lowercase()
+                            .cmp(&db_guard.entries[a].name.to_lowercase())
+                    });
                 }
             }
             SortColumn::Path => {
                 if self.sort_asc {
-                    results.sort_by(|a, b| a.path.to_lowercase().cmp(&b.path.to_lowercase()));
+                    results.sort_by(|&a, &b| {
+                        db_guard.entries[a]
+                            .path
+                            .to_lowercase()
+                            .cmp(&db_guard.entries[b].path.to_lowercase())
+                    });
                 } else {
-                    results.sort_by(|a, b| b.path.to_lowercase().cmp(&a.path.to_lowercase()));
+                    results.sort_by(|&a, &b| {
+                        db_guard.entries[b]
+                            .path
+                            .to_lowercase()
+                            .cmp(&db_guard.entries[a].path.to_lowercase())
+                    });
                 }
             }
             SortColumn::Size => {
                 if self.sort_asc {
-                    results.sort_by_key(|e| e.size);
+                    results.sort_by_key(|&i| db_guard.entries[i].size);
                 } else {
-                    results.sort_by_key(|e| std::cmp::Reverse(e.size));
+                    results.sort_by_key(|&i| std::cmp::Reverse(db_guard.entries[i].size));
                 }
             }
             SortColumn::Date => {
                 if self.sort_asc {
-                    results.sort_by_key(|e| e.modified);
+                    results.sort_by_key(|&i| db_guard.entries[i].modified);
                 } else {
-                    results.sort_by_key(|e| std::cmp::Reverse(e.modified));
+                    results.sort_by_key(|&i| std::cmp::Reverse(db_guard.entries[i].modified));
                 }
             }
         }
@@ -297,119 +320,177 @@ impl eframe::App for MagnoliaApp {
             let row_height = 20.0;
             let total_rows = self.matched_results.len();
 
-            egui::Grid::new("results_header")
-                .striped(true)
-                .min_col_width(80.0)
-                .show(ui, |ui| {
-                    if ui.button("Name ⬍").clicked() {
-                        if self.sort_column == SortColumn::Name {
-                            self.sort_asc = !self.sort_asc;
-                        } else {
-                            self.sort_column = SortColumn::Name;
-                            self.sort_asc = true;
-                        }
-                        self.update_search();
+            let avail_width = ui.available_width();
+            let size_width = 80.0;
+            let date_width = 140.0;
+            let spacing = 6.0;
+            let remaining = (avail_width - size_width - date_width - (spacing * 3.0) - 16.0).max(200.0);
+            let name_width = remaining * 0.4;
+            let path_width = remaining * 0.6;
+
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = spacing;
+                if ui.add_sized([name_width, 22.0], egui::Button::new("Name ⬍")).clicked() {
+                    if self.sort_column == SortColumn::Name {
+                        self.sort_asc = !self.sort_asc;
+                    } else {
+                        self.sort_column = SortColumn::Name;
+                        self.sort_asc = true;
                     }
-                    if ui.button("Path ⬍").clicked() {
-                        if self.sort_column == SortColumn::Path {
-                            self.sort_asc = !self.sort_asc;
-                        } else {
-                            self.sort_column = SortColumn::Path;
-                            self.sort_asc = true;
-                        }
-                        self.update_search();
+                    self.update_search();
+                }
+                if ui.add_sized([path_width, 22.0], egui::Button::new("Path ⬍")).clicked() {
+                    if self.sort_column == SortColumn::Path {
+                        self.sort_asc = !self.sort_asc;
+                    } else {
+                        self.sort_column = SortColumn::Path;
+                        self.sort_asc = true;
                     }
-                    if ui.button("Size ⬍").clicked() {
-                        if self.sort_column == SortColumn::Size {
-                            self.sort_asc = !self.sort_asc;
-                        } else {
-                            self.sort_column = SortColumn::Size;
-                            self.sort_asc = true;
-                        }
-                        self.update_search();
+                    self.update_search();
+                }
+                if ui.add_sized([size_width, 22.0], egui::Button::new("Size ⬍")).clicked() {
+                    if self.sort_column == SortColumn::Size {
+                        self.sort_asc = !self.sort_asc;
+                    } else {
+                        self.sort_column = SortColumn::Size;
+                        self.sort_asc = true;
                     }
-                    if ui.button("Date Modified ⬍").clicked() {
-                        if self.sort_column == SortColumn::Date {
-                            self.sort_asc = !self.sort_asc;
-                        } else {
-                            self.sort_column = SortColumn::Date;
-                            self.sort_asc = true;
-                        }
-                        self.update_search();
+                    self.update_search();
+                }
+                if ui.add_sized([date_width, 22.0], egui::Button::new("Date Modified ⬍")).clicked() {
+                    if self.sort_column == SortColumn::Date {
+                        self.sort_asc = !self.sort_asc;
+                    } else {
+                        self.sort_column = SortColumn::Date;
+                        self.sort_asc = true;
                     }
-                    ui.end_row();
-                });
+                    self.update_search();
+                }
+            });
 
             ui.separator();
+
+            let mut clicked_id = None;
 
             egui::ScrollArea::vertical()
                 .auto_shrink([false; 2])
                 .show_rows(ui, row_height, total_rows, |ui, row_range| {
+                    let db_guard = self.db.lock().unwrap();
                     for row in row_range {
-                        if let Some(entry) = self.matched_results.get(row) {
-                            let icon = if entry.is_dir { "📁 " } else { "📄 " };
-                            let name_text = format!("{}{}", icon, entry.name);
-                            let entry_path = entry.path.clone();
-                            let entry_name = entry.name.clone();
+                        if let Some(&idx) = self.matched_results.get(row) {
+                            if let Some(entry) = db_guard.entries.get(idx) {
+                                let entry_id = entry.id;
+                                let icon = if entry.is_dir { "📁 " } else { "📄 " };
+                                let name_text = format!("{}{}", icon, entry.name);
+                                let entry_path = entry.path.clone();
+                                let entry_name = entry.name.clone();
+                                let size_text = format_size(entry.size, entry.is_dir);
+                                let date_text = format_timestamp(entry.modified);
 
-                            let mut row_rect = ui.available_rect_before_wrap();
-                            row_rect.set_height(row_height);
+                                let mut row_rect = ui.available_rect_before_wrap();
+                                row_rect.set_height(row_height);
 
-                            let response = ui.allocate_rect(row_rect, egui::Sense::click());
+                                let response = ui.allocate_rect(row_rect, egui::Sense::click());
 
-                            // Highlight baris saat hover
-                            if response.hovered() {
-                                ui.painter().rect_filled(
-                                    row_rect,
-                                    0.0,
-                                    ui.visuals().faint_bg_color,
-                                );
-                            }
+                                let is_selected = self.selected_id == Some(entry_id);
 
-                            // Klik kiri: buka file langsung
-                            if response.clicked() {
-                                let _ = open_file_default(&entry_path);
-                            }
+                                // Highlight baris saat selection atau hover
+                                if is_selected {
+                                    ui.painter().rect_filled(
+                                        row_rect,
+                                        2.0,
+                                        ui.visuals().selection.bg_fill,
+                                    );
+                                } else if response.hovered() {
+                                    ui.painter().rect_filled(
+                                        row_rect,
+                                        2.0,
+                                        ui.visuals().faint_bg_color,
+                                    );
+                                }
 
-                            // Built-in In-App Context Menu via egui (Dijamin 100% responsif & lancar)
-                            response.context_menu(|ui| {
-                                ui.set_min_width(180.0);
-                                if ui.button("🚀 Open File").clicked() {
+                                if response.clicked() {
+                                    clicked_id = Some(entry_id);
                                     let _ = open_file_default(&entry_path);
-                                    ui.close_menu();
                                 }
-                                if ui.button("📁 Open in Explorer").clicked() {
-                                    let _ = open_in_explorer(&entry_path);
-                                    ui.close_menu();
-                                }
-                                ui.separator();
-                                if ui.button("📋 Copy Full Path").clicked() {
-                                    ui.output_mut(|o| o.copied_text = entry_path.clone());
-                                    ui.close_menu();
-                                }
-                                if ui.button("📄 Copy File Name").clicked() {
-                                    ui.output_mut(|o| o.copied_text = entry_name.clone());
-                                    ui.close_menu();
-                                }
-                                ui.separator();
-                                if ui.button("ℹ️ Properties").clicked() {
-                                    let _ = open_file_properties(&entry_path);
-                                    ui.close_menu();
-                                }
-                            });
 
-                            // Render elemen kolom di atas baris
-                            ui.allocate_new_ui(egui::UiBuilder::new().max_rect(row_rect), |ui| {
-                                ui.horizontal(|ui| {
-                                    ui.add(egui::Label::new(&name_text).truncate());
-                                    ui.add(egui::Label::new(&entry.path).truncate());
-                                    ui.label(format_size(entry.size, entry.is_dir));
-                                    ui.label(format_timestamp(entry.modified));
+                                if response.secondary_clicked() {
+                                    clicked_id = Some(entry_id);
+                                }
+
+                                // Built-in In-App Context Menu via egui (Dijamin 100% responsif & lancar)
+                                response.context_menu(|ui| {
+                                    ui.set_min_width(180.0);
+                                    if ui.button("🚀 Open File").clicked() {
+                                        let _ = open_file_default(&entry_path);
+                                        ui.close_menu();
+                                    }
+                                    if ui.button("📁 Open in Explorer").clicked() {
+                                        let _ = open_in_explorer(&entry_path);
+                                        ui.close_menu();
+                                    }
+                                    ui.separator();
+                                    if ui.button("📋 Copy Full Path").clicked() {
+                                        ui.output_mut(|o| o.copied_text = entry_path.clone());
+                                        ui.close_menu();
+                                    }
+                                    if ui.button("📄 Copy File Name").clicked() {
+                                        ui.output_mut(|o| o.copied_text = entry_name.clone());
+                                        ui.close_menu();
+                                    }
+                                    ui.separator();
+                                    if ui.button("ℹ️ Properties").clicked() {
+                                        let _ = open_file_properties(&entry_path);
+                                        ui.close_menu();
+                                    }
                                 });
-                            });
+
+                                let text_color = if is_selected {
+                                    ui.visuals().selection.stroke.color
+                                } else {
+                                    ui.visuals().text_color()
+                                };
+
+                                // Render elemen kolom sejajar persis dengan ukuran header
+                                ui.allocate_new_ui(egui::UiBuilder::new().max_rect(row_rect), |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.spacing_mut().item_spacing.x = spacing;
+                                        ui.add_sized(
+                                            [name_width, row_height],
+                                            egui::Label::new(
+                                                egui::RichText::new(&name_text).color(text_color),
+                                            )
+                                            .truncate(),
+                                        );
+                                        ui.add_sized(
+                                            [path_width, row_height],
+                                            egui::Label::new(
+                                                egui::RichText::new(&entry_path).color(text_color),
+                                            )
+                                            .truncate(),
+                                        );
+                                        ui.add_sized(
+                                            [size_width, row_height],
+                                            egui::Label::new(
+                                                egui::RichText::new(&size_text).color(text_color),
+                                            ),
+                                        );
+                                        ui.add_sized(
+                                            [date_width, row_height],
+                                            egui::Label::new(
+                                                egui::RichText::new(&date_text).color(text_color),
+                                            ),
+                                        );
+                                    });
+                                });
+                            }
                         }
                     }
                 });
+
+            if let Some(id) = clicked_id {
+                self.selected_id = Some(id);
+            }
         });
     }
 }
