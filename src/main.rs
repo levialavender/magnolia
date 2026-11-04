@@ -692,10 +692,12 @@ impl eframe::App for MagnoliaApp {
                                             if r_state.initial_focus {
                                                 te_resp.request_focus();
                                                 r_state.initial_focus = false;
-                                            }
-
-                                            if te_resp.lost_focus() && ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
-                                                commit_rename = Some((entry_id, r_state.old_full_path.clone(), r_state.new_name.clone()));
+                                            } else if te_resp.lost_focus() {
+                                                if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+                                                    cancel_rename = true;
+                                                } else {
+                                                    commit_rename = Some((entry_id, r_state.old_full_path.clone(), r_state.new_name.clone()));
+                                                }
                                             } else if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
                                                 cancel_rename = true;
                                             }
@@ -805,6 +807,12 @@ impl eframe::App for MagnoliaApp {
 
             if let Some(id) = clicked_id {
                 self.selected_id = Some(id);
+                // If user clicked a different row while renaming, commit/exit rename on the previous row
+                if let Some(ref r_state) = self.inline_rename {
+                    if r_state.entry_id != id {
+                        commit_rename = Some((r_state.entry_id, r_state.old_full_path.clone(), r_state.new_name.clone()));
+                    }
+                }
             }
 
             // Keyboard shortcut F2: Rename file yang sedang diseleksi
@@ -827,7 +835,8 @@ impl eframe::App for MagnoliaApp {
                 let old_p = std::path::PathBuf::from(&old_full_p);
                 if let Some(parent) = old_p.parent() {
                     let new_p = parent.join(&new_n);
-                    if new_p != old_p && !new_n.trim().is_empty() {
+                    let old_file_name = old_p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                    if new_n != old_file_name && !new_n.trim().is_empty() {
                         if let Ok(()) = std::fs::rename(&old_p, &new_p) {
                             let mut db = self.db.lock().unwrap();
                             if let Some(e) = db.entries.iter_mut().find(|e| e.id == id) {
