@@ -708,9 +708,35 @@ fn open_file_properties(path: &str) -> std::io::Result<()> {
 }
 
 fn open_in_explorer(path: &str) -> std::io::Result<()> {
-    std::process::Command::new("explorer.exe")
-        .arg(format!("/select,{}", path))
-        .spawn()?;
+    use windows::core::PCWSTR;
+    use windows::Win32::System::Ole::{OleInitialize, OleUninitialize};
+    use windows::Win32::UI::Shell::{ILCreateFromPathW, ILFree, SHOpenFolderAndSelectItems};
+
+    let path_buf = path.to_string();
+    std::thread::spawn(move || {
+        let wide: Vec<u16> = path_buf.encode_utf16().chain(std::iter::once(0)).collect();
+        let success = unsafe {
+            let _ = OleInitialize(None);
+            let pidl = ILCreateFromPathW(PCWSTR(wide.as_ptr()));
+            if !pidl.is_null() {
+                let hr = SHOpenFolderAndSelectItems(pidl, None, 0);
+                ILFree(Some(pidl));
+                OleUninitialize();
+                hr.is_ok()
+            } else {
+                OleUninitialize();
+                false
+            }
+        };
+
+        if !success {
+            use std::os::windows::process::CommandExt;
+            let _ = std::process::Command::new("explorer.exe")
+                .raw_arg(format!("/select,\"{}\"", path_buf))
+                .spawn();
+        }
+    });
+
     Ok(())
 }
 
@@ -754,6 +780,8 @@ fn dirs_or_local() -> PathBuf {
         PathBuf::from(".")
     }
 }
+
+
 
 
 
