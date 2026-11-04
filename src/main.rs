@@ -3,7 +3,7 @@
 use chrono::{DateTime, Local};
 use eframe::egui;
 use magnolia::db::{Database, FileEntry};
-use magnolia::ntfs::get_available_drives;
+use magnolia::ntfs::{get_available_drives, UsnChange, UsnMonitor};
 use magnolia::query::{QueryEngine, QueryOptions};
 use magnolia::scanner::scan_directory;
 use std::path::PathBuf;
@@ -57,6 +57,7 @@ struct MagnoliaApp {
     matched_results: Vec<FileEntry>,
     status_text: String,
     is_scanning: Arc<AtomicBool>,
+    db_changed_flag: Arc<AtomicBool>,
     db_file_path: PathBuf,
     sort_column: SortColumn,
     sort_asc: bool,
@@ -83,9 +84,10 @@ impl MagnoliaApp {
 
         let db_arc = Arc::new(Mutex::new(db));
         let count = db_arc.lock().unwrap().len();
+        let db_changed_flag = Arc::new(AtomicBool::new(false));
 
         let mut app = Self {
-            db: db_arc,
+            db: db_arc.clone(),
             search_query: String::new(),
             options: QueryOptions::default(),
             matched_results: Vec::new(),
@@ -95,6 +97,7 @@ impl MagnoliaApp {
                 "First launch: Auto-indexing all drives in background...".to_string()
             },
             is_scanning: Arc::new(AtomicBool::new(false)),
+            db_changed_flag: db_changed_flag.clone(),
             db_file_path,
             sort_column: SortColumn::Name,
             sort_asc: true,
@@ -102,12 +105,64 @@ impl MagnoliaApp {
 
         app.update_search();
 
+        // Start Real-Time USN Journal Background Watcher
+        app.start_usn_watcher();
+
         // Otomatis index semua drive jika database kosong saat pertama kali dibuka
         if count == 0 {
             app.trigger_scan_all_drives();
         }
 
         app
+    }
+
+    fn start_usn_watcher(&self) {
+        let db_clone = self.db.clone();
+        let changed_flag = self.db_changed_flag.clone();
+        let save_path = self.db_file_path.clone();
+
+        thread::spawn(move || {
+            let drives = get_available_drives();
+            let mut monitors: Vec<UsnMonitor> = drives
+                .into_iter()
+                .filter_map(|d| UsnMonitor::new(d).ok())
+                .collect();
+
+            if monitors.is_empty() {
+                return;
+            }
+
+            loop {
+                thread::sleep(Duration::from_millis(1500));
+                let mut has_changes = false;
+
+                for monitor in &mut monitors {
+                    if let Ok(changes) = monitor.read_recent_changes() {
+                        if !changes.is_empty() {
+                            let mut db = db_clone.lock().unwrap();
+                            for change in changes {
+                                match change {
+                                    UsnChange::Removed(name) => {
+                                        let name_lower = name.to_lowercase();
+                                        db.entries.retain(|e| e.name.to_lowercase() != name_lower);
+                                        has_changes = true;
+                                    }
+                                    UsnChange::AddedOrModified(_name) => {
+                                        has_changes = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if has_changes {
+                    changed_flag.store(true, Ordering::Relaxed);
+                    let db = db_clone.lock().unwrap();
+                    let _ = db.save_to_file(&save_path);
+                }
+            }
+        });
     }
 
     fn trigger_scan_all_drives(&mut self) {
@@ -282,6 +337,12 @@ impl eframe::App for MagnoliaApp {
                 } else if self.matched_results.is_empty() && self.search_query.is_empty() {
                     // Refresh hasil begitu scan selesai
                     self.update_search();
+                }
+
+                // Check if background real-time USN watcher detected changes
+                if self.db_changed_flag.swap(false, Ordering::Relaxed) {
+                    self.update_search();
+                    ctx.request_repaint();
                 }
             });
             ui.add_space(4.0);

@@ -34,6 +34,20 @@ impl Database {
         self.entries.dedup_by(|a, b| a.path == b.path);
     }
 
+    pub fn remove_by_path(&mut self, path: &str) {
+        let lower = path.to_lowercase();
+        self.entries.retain(|e| e.path.to_lowercase() != lower);
+    }
+
+    pub fn update_or_insert(&mut self, entry: FileEntry) {
+        let lower = entry.path.to_lowercase();
+        if let Some(existing) = self.entries.iter_mut().find(|e| e.path.to_lowercase() == lower) {
+            *existing = entry;
+        } else {
+            self.entries.push(entry);
+        }
+    }
+
     pub fn len(&self) -> usize {
         self.entries.len()
     }
