@@ -17,14 +17,14 @@ pub fn show_native_context_menu<P: AsRef<Path>>(file_path: P) {
     let path_str = path.to_string_lossy();
     let wide_path: Vec<u16> = path_str.encode_utf16().chain(std::iter::once(0)).collect();
 
+    let mut pt = POINT::default();
+    let _ = unsafe { GetCursorPos(&mut pt) };
+    let active_hwnd_raw = unsafe { GetForegroundWindow().0 as usize };
+
     // Spawn on a dedicated STA thread initialized with OleInitialize for Shell COM/drag-drop/clipboard
     std::thread::spawn(move || unsafe {
         let _ = OleInitialize(None);
-
-        let mut pt = POINT::default();
-        let _ = GetCursorPos(&mut pt);
-
-        let active_hwnd = GetForegroundWindow();
+        let active_hwnd = windows::Win32::Foundation::HWND(active_hwnd_raw as *mut _);
 
         let item_res: windows::core::Result<IShellItem> =
             SHCreateItemFromParsingName(PCWSTR(wide_path.as_ptr()), None::<&IBindCtx>);
@@ -75,3 +75,5 @@ pub fn show_native_context_menu<P: AsRef<Path>>(file_path: P) {
         OleUninitialize();
     });
 }
+
+

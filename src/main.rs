@@ -547,7 +547,6 @@ impl eframe::App for MagnoliaApp {
             }
 
             let mut clicked_id = None;
-            let mut rename_request = None;
 
             egui::ScrollArea::vertical()
                 .auto_shrink([false; 2])
@@ -711,42 +710,9 @@ impl eframe::App for MagnoliaApp {
 
                                 if row_resp.secondary_clicked() {
                                     clicked_id = Some(entry_id);
+                                    // Klik kanan: langsung munculkan Context Menu asli Windows Explorer (IContextMenu)
+                                    magnolia::context_menu::show_native_context_menu(&entry_path);
                                 }
-
-                                // Built-in In-App Context Menu via egui (Dijamin 100% responsif & lancar)
-                                row_resp.context_menu(|ui| {
-                                    ui.set_min_width(220.0);
-                                    if ui.button("🚀 Open File").clicked() {
-                                        let _ = open_file_default(&entry_path);
-                                        ui.close_menu();
-                                    }
-                                    if ui.button("📁 Open in Explorer").clicked() {
-                                        let _ = open_in_explorer(&entry_path);
-                                        ui.close_menu();
-                                    }
-                                    ui.separator();
-                                    if ui.button("✏️ Rename").clicked() {
-                                        rename_request = Some((entry_id, entry_path.clone(), entry_name.clone()));
-                                        ui.close_menu();
-                                    }
-                                    if ui.button("📋 Copy Full Path").clicked() {
-                                        ui.output_mut(|o| o.copied_text = entry_path.clone());
-                                        ui.close_menu();
-                                    }
-                                    if ui.button("📄 Copy File Name").clicked() {
-                                        ui.output_mut(|o| o.copied_text = entry_name.clone());
-                                        ui.close_menu();
-                                    }
-                                    ui.separator();
-                                    if ui.button("🌐 Windows Context Menu (System)").clicked() {
-                                        magnolia::context_menu::show_native_context_menu(&entry_path);
-                                        ui.close_menu();
-                                    }
-                                    if ui.button("ℹ️ Properties").clicked() {
-                                        let _ = open_file_properties(&entry_path);
-                                        ui.close_menu();
-                                    }
-                                });
                             }
                         }
                     }
@@ -756,13 +722,20 @@ impl eframe::App for MagnoliaApp {
                 self.selected_id = Some(id);
             }
 
-            if let Some((id, path, name)) = rename_request {
-                self.rename_modal = Some(RenameDialogState {
-                    entry_id: id,
-                    old_full_path: path,
-                    new_name: name,
-                    error_msg: None,
-                });
+            // Keyboard shortcut F2: Rename file yang sedang diseleksi
+            if ctx.input(|i| i.key_pressed(egui::Key::F2)) {
+                if let Some(id) = self.selected_id {
+                    let db_guard = self.db.lock().unwrap();
+                    if let Some(entry) = db_guard.entries.iter().find(|e| e.id == id) {
+                        let full_p = db_guard.get_full_path(entry);
+                        self.rename_modal = Some(RenameDialogState {
+                            entry_id: id,
+                            old_full_path: full_p,
+                            new_name: entry.name.clone(),
+                            error_msg: None,
+                        });
+                    }
+                }
             }
         });
 
@@ -859,6 +832,7 @@ fn open_file_default(path: &str) -> std::io::Result<()> {
     Ok(())
 }
 
+#[allow(dead_code)]
 fn open_file_properties(path: &str) -> std::io::Result<()> {
     use windows::core::PCWSTR;
     use windows::Win32::Foundation::HWND;
