@@ -66,6 +66,10 @@ struct MagnoliaApp {
     fs_rx: std::sync::mpsc::Receiver<FileSystemChange>,
     _watcher_stop: Arc<AtomicBool>,
     icon_cache: std::collections::HashMap<String, egui::TextureHandle>,
+    col_width_name: f32,
+    col_width_path: f32,
+    col_width_size: f32,
+    col_width_date: f32,
 }
 
 #[derive(PartialEq, Eq, Clone, Copy)]
@@ -117,6 +121,10 @@ impl MagnoliaApp {
             fs_rx,
             _watcher_stop: watcher_stop,
             icon_cache: std::collections::HashMap::new(),
+            col_width_name: 260.0,
+            col_width_path: 380.0,
+            col_width_size: 90.0,
+            col_width_date: 150.0,
         };
 
         app.update_search();
@@ -309,6 +317,41 @@ impl MagnoliaApp {
     }
 }
 
+fn header_button(ui: &mut egui::Ui, text: &str, width: f32) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(width, 24.0), egui::Sense::click());
+    let bg_color = if resp.hovered() {
+        ui.visuals().widgets.hovered.bg_fill
+    } else {
+        ui.visuals().widgets.inactive.bg_fill
+    };
+    ui.painter().rect_filled(rect, 2.0, bg_color);
+    ui.painter().text(
+        egui::pos2(rect.min.x + 8.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        text,
+        egui::FontId::proportional(13.0),
+        ui.visuals().text_color(),
+    );
+    resp
+}
+
+fn column_divider(ui: &mut egui::Ui, width: &mut f32) {
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(6.0, 24.0), egui::Sense::click_and_drag());
+    if resp.dragged() {
+        *width = (*width + resp.drag_delta().x).max(50.0);
+    }
+    if resp.hovered() || resp.dragged() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeColumn);
+        ui.painter().rect_filled(rect, 1.0, ui.visuals().widgets.active.bg_fill);
+    } else {
+        let x = rect.center().x;
+        ui.painter().line_segment(
+            [egui::pos2(x, rect.min.y + 4.0), egui::pos2(x, rect.max.y - 4.0)],
+            ui.visuals().widgets.noninteractive.bg_stroke,
+        );
+    }
+}
+
 impl eframe::App for MagnoliaApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let mut fs_updated = false;
@@ -411,20 +454,12 @@ impl eframe::App for MagnoliaApp {
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            let row_height = 20.0;
+            let row_height = 22.0;
             let total_rows = self.matched_results.len();
 
-            let avail_width = ui.available_width();
-            let size_width = 80.0;
-            let date_width = 140.0;
-            let spacing = 6.0;
-            let remaining = (avail_width - size_width - date_width - (spacing * 3.0) - 16.0).max(200.0);
-            let name_width = remaining * 0.4;
-            let path_width = remaining * 0.6;
-
             ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = spacing;
-                if ui.add_sized([name_width, 22.0], egui::Button::new("Name ⬍")).clicked() {
+                ui.spacing_mut().item_spacing.x = 0.0;
+                if header_button(ui, "Name ⬍", self.col_width_name).clicked() {
                     if self.sort_column == SortColumn::Name {
                         self.sort_asc = !self.sort_asc;
                     } else {
@@ -433,7 +468,9 @@ impl eframe::App for MagnoliaApp {
                     }
                     self.update_search();
                 }
-                if ui.add_sized([path_width, 22.0], egui::Button::new("Path ⬍")).clicked() {
+                column_divider(ui, &mut self.col_width_name);
+
+                if header_button(ui, "Path ⬍", self.col_width_path).clicked() {
                     if self.sort_column == SortColumn::Path {
                         self.sort_asc = !self.sort_asc;
                     } else {
@@ -442,7 +479,9 @@ impl eframe::App for MagnoliaApp {
                     }
                     self.update_search();
                 }
-                if ui.add_sized([size_width, 22.0], egui::Button::new("Size ⬍")).clicked() {
+                column_divider(ui, &mut self.col_width_path);
+
+                if header_button(ui, "Size ⬍", self.col_width_size).clicked() {
                     if self.sort_column == SortColumn::Size {
                         self.sort_asc = !self.sort_asc;
                     } else {
@@ -451,7 +490,9 @@ impl eframe::App for MagnoliaApp {
                     }
                     self.update_search();
                 }
-                if ui.add_sized([date_width, 22.0], egui::Button::new("Date Modified ⬍")).clicked() {
+                column_divider(ui, &mut self.col_width_size);
+
+                if header_button(ui, "Date Modified ⬍", self.col_width_date).clicked() {
                     if self.sort_column == SortColumn::Date {
                         self.sort_asc = !self.sort_asc;
                     } else {
@@ -460,6 +501,7 @@ impl eframe::App for MagnoliaApp {
                     }
                     self.update_search();
                 }
+                column_divider(ui, &mut self.col_width_date);
             });
 
             ui.separator();
@@ -552,53 +594,113 @@ impl eframe::App for MagnoliaApp {
                                 });
 
                                 let row_resp = ui.horizontal(|ui| {
-                                    ui.spacing_mut().item_spacing.x = spacing;
-                                    let name_resp = ui.allocate_ui_with_layout(
-                                        egui::vec2(name_width, row_height),
-                                        egui::Layout::left_to_right(egui::Align::Center),
+                                    ui.spacing_mut().item_spacing.x = 0.0;
+
+                                    // 1. Kolom Name
+                                    let (name_rect, name_resp) = ui.allocate_exact_size(
+                                        egui::vec2(self.col_width_name, row_height),
+                                        egui::Sense::click(),
+                                    );
+                                    let icon_rect = egui::Rect::from_min_size(
+                                        egui::pos2(name_rect.min.x + 4.0, name_rect.min.y + (row_height - 16.0) / 2.0),
+                                        egui::vec2(16.0, 16.0),
+                                    );
+                                    if let Some(tex) = icon_tex {
+                                        ui.painter().image(
+                                            tex.id(),
+                                            icon_rect,
+                                            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                                            egui::Color32::WHITE,
+                                        );
+                                    }
+                                    let name_label_rect = egui::Rect::from_min_max(
+                                        egui::pos2(name_rect.min.x + 24.0, name_rect.min.y),
+                                        name_rect.max,
+                                    );
+                                    ui.allocate_new_ui(
+                                        egui::UiBuilder::new().max_rect(name_label_rect),
                                         |ui| {
-                                            ui.spacing_mut().item_spacing.x = 6.0;
-                                            let img_resp = if let Some(tex) = icon_tex {
-                                                ui.add(
-                                                    egui::Image::new((tex.id(), egui::vec2(16.0, 16.0)))
-                                                        .sense(egui::Sense::click()),
-                                                )
-                                            } else {
-                                                ui.allocate_response(egui::vec2(16.0, 16.0), egui::Sense::hover())
-                                            };
-                                            let label_resp = ui.add(
+                                            ui.add(
                                                 egui::Label::new(
                                                     egui::RichText::new(&entry_name).color(text_color),
                                                 )
-                                                .sense(egui::Sense::click())
                                                 .truncate(),
                                             );
-                                            img_resp | label_resp
                                         },
-                                    ).inner;
+                                    );
 
-                                    let path_resp = ui.add_sized(
-                                        [path_width, row_height],
-                                        egui::Label::new(
-                                            egui::RichText::new(&entry_path).color(text_color),
-                                        )
-                                        .sense(egui::Sense::click())
-                                        .truncate(),
+                                    // Spacer 6.0px persis sejajar divider header
+                                    ui.allocate_exact_size(egui::vec2(6.0, row_height), egui::Sense::hover());
+
+                                    // 2. Kolom Path (Align Left)
+                                    let (path_rect, path_resp) = ui.allocate_exact_size(
+                                        egui::vec2(self.col_width_path, row_height),
+                                        egui::Sense::click(),
                                     );
-                                    let size_resp = ui.add_sized(
-                                        [size_width, row_height],
-                                        egui::Label::new(
-                                            egui::RichText::new(&size_text).color(text_color),
-                                        )
-                                        .sense(egui::Sense::click()),
+                                    let path_label_rect = egui::Rect::from_min_max(
+                                        egui::pos2(path_rect.min.x + 4.0, path_rect.min.y),
+                                        path_rect.max,
                                     );
-                                    let date_resp = ui.add_sized(
-                                        [date_width, row_height],
-                                        egui::Label::new(
-                                            egui::RichText::new(&date_text).color(text_color),
-                                        )
-                                        .sense(egui::Sense::click()),
+                                    ui.allocate_new_ui(
+                                        egui::UiBuilder::new().max_rect(path_label_rect),
+                                        |ui| {
+                                            ui.add(
+                                                egui::Label::new(
+                                                    egui::RichText::new(&entry_path).color(text_color),
+                                                )
+                                                .truncate(),
+                                            );
+                                        },
                                     );
+
+                                    // Spacer 6.0px
+                                    ui.allocate_exact_size(egui::vec2(6.0, row_height), egui::Sense::hover());
+
+                                    // 3. Kolom Size (Align Left)
+                                    let (size_rect, size_resp) = ui.allocate_exact_size(
+                                        egui::vec2(self.col_width_size, row_height),
+                                        egui::Sense::click(),
+                                    );
+                                    let size_label_rect = egui::Rect::from_min_max(
+                                        egui::pos2(size_rect.min.x + 4.0, size_rect.min.y),
+                                        size_rect.max,
+                                    );
+                                    ui.allocate_new_ui(
+                                        egui::UiBuilder::new().max_rect(size_label_rect),
+                                        |ui| {
+                                            ui.add(
+                                                egui::Label::new(
+                                                    egui::RichText::new(&size_text).color(text_color),
+                                                )
+                                                .truncate(),
+                                            );
+                                        },
+                                    );
+
+                                    // Spacer 6.0px
+                                    ui.allocate_exact_size(egui::vec2(6.0, row_height), egui::Sense::hover());
+
+                                    // 4. Kolom Date (Align Left)
+                                    let (date_rect, date_resp) = ui.allocate_exact_size(
+                                        egui::vec2(self.col_width_date, row_height),
+                                        egui::Sense::click(),
+                                    );
+                                    let date_label_rect = egui::Rect::from_min_max(
+                                        egui::pos2(date_rect.min.x + 4.0, date_rect.min.y),
+                                        date_rect.max,
+                                    );
+                                    ui.allocate_new_ui(
+                                        egui::UiBuilder::new().max_rect(date_label_rect),
+                                        |ui| {
+                                            ui.add(
+                                                egui::Label::new(
+                                                    egui::RichText::new(&date_text).color(text_color),
+                                                )
+                                                .truncate(),
+                                            );
+                                        },
+                                    );
+
                                     name_resp | path_resp | size_resp | date_resp
                                 }).inner;
 
@@ -780,6 +882,10 @@ fn dirs_or_local() -> PathBuf {
         PathBuf::from(".")
     }
 }
+
+
+
+
 
 
 
