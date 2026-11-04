@@ -3,7 +3,9 @@
 use chrono::{DateTime, Local};
 use eframe::egui;
 use magnolia::db::Database;
-use magnolia::ntfs::{get_available_drives, scan_mft};
+use magnolia::ntfs::{
+    get_available_drives, scan_mft, start_downloads_watcher, start_usn_monitor, FileSystemChange,
+};
 use magnolia::query::{QueryEngine, QueryOptions};
 use magnolia::scanner::scan_directory_fast;
 use std::path::PathBuf;
@@ -61,6 +63,8 @@ struct MagnoliaApp {
     sort_column: SortColumn,
     sort_asc: bool,
     selected_id: Option<u64>,
+    fs_rx: std::sync::mpsc::Receiver<FileSystemChange>,
+    _watcher_stop: Arc<AtomicBool>,
 }
 
 #[derive(PartialEq, Eq, Clone, Copy)]
@@ -85,6 +89,15 @@ impl MagnoliaApp {
         let db_arc = Arc::new(Mutex::new(db));
         let count = db_arc.lock().unwrap().len();
 
+        let (fs_tx, fs_rx) = std::sync::mpsc::channel();
+        let watcher_stop = Arc::new(AtomicBool::new(false));
+
+        let drives = get_available_drives();
+        for &d in &drives {
+            start_usn_monitor(d, watcher_stop.clone(), fs_tx.clone());
+        }
+        start_downloads_watcher(watcher_stop.clone(), fs_tx);
+
         let mut app = Self {
             db: db_arc,
             search_query: String::new(),
@@ -100,6 +113,8 @@ impl MagnoliaApp {
             sort_column: SortColumn::Name,
             sort_asc: true,
             selected_id: None,
+            fs_rx,
+            _watcher_stop: watcher_stop,
         };
 
         app.update_search();
@@ -264,6 +279,49 @@ impl MagnoliaApp {
 
 impl eframe::App for MagnoliaApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        let mut fs_updated = false;
+        while let Ok(change) = self.fs_rx.try_recv() {
+            let mut db = self.db.lock().unwrap();
+            match change {
+                FileSystemChange::CreatedOrModified {
+                    drive: _,
+                    name,
+                    parent_folder,
+                    is_dir,
+                } => {
+                    let parent_id = db.add_folder(parent_folder);
+                    let id = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_nanos() as u64)
+                        .unwrap_or(0);
+                    db.add(magnolia::db::FileEntry {
+                        id,
+                        name,
+                        parent_id,
+                        size: 0,
+                        is_dir,
+                        modified: std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0),
+                    });
+                    fs_updated = true;
+                }
+                FileSystemChange::Deleted { drive: _, name } => {
+                    let before = db.entries.len();
+                    db.entries.retain(|e| e.name != name);
+                    if db.entries.len() != before {
+                        fs_updated = true;
+                    }
+                }
+            }
+        }
+
+        if fs_updated {
+            self.update_search();
+            ctx.request_repaint();
+        }
+
         egui::TopBottomPanel::top("top_bar").show(ctx, |ui| {
             ui.add_space(6.0);
             ui.horizontal(|ui| {
@@ -394,18 +452,17 @@ impl eframe::App for MagnoliaApp {
                                 let mut row_rect = ui.available_rect_before_wrap();
                                 row_rect.set_height(row_height);
 
-                                let response = ui.allocate_rect(row_rect, egui::Sense::click());
-
+                                let is_hovered = ui.rect_contains_pointer(row_rect);
                                 let is_selected = self.selected_id == Some(entry_id);
 
-                                // Highlight baris saat selection atau hover
+                                // Visual highlight: selection > hover
                                 if is_selected {
                                     ui.painter().rect_filled(
                                         row_rect,
                                         2.0,
                                         ui.visuals().selection.bg_fill,
                                     );
-                                } else if response.hovered() {
+                                } else if is_hovered {
                                     ui.painter().rect_filled(
                                         row_rect,
                                         2.0,
@@ -413,18 +470,59 @@ impl eframe::App for MagnoliaApp {
                                     );
                                 }
 
-                                if response.clicked() {
+                                let text_color = if is_selected {
+                                    ui.visuals().selection.stroke.color
+                                } else {
+                                    ui.visuals().text_color()
+                                };
+
+                                let row_resp = ui.horizontal(|ui| {
+                                    ui.spacing_mut().item_spacing.x = spacing;
+                                    let name_resp = ui.add_sized(
+                                        [name_width, row_height],
+                                        egui::Label::new(
+                                            egui::RichText::new(&name_text).color(text_color),
+                                        )
+                                        .sense(egui::Sense::click())
+                                        .truncate(),
+                                    );
+                                    let path_resp = ui.add_sized(
+                                        [path_width, row_height],
+                                        egui::Label::new(
+                                            egui::RichText::new(&entry_path).color(text_color),
+                                        )
+                                        .sense(egui::Sense::click())
+                                        .truncate(),
+                                    );
+                                    let size_resp = ui.add_sized(
+                                        [size_width, row_height],
+                                        egui::Label::new(
+                                            egui::RichText::new(&size_text).color(text_color),
+                                        )
+                                        .sense(egui::Sense::click()),
+                                    );
+                                    let date_resp = ui.add_sized(
+                                        [date_width, row_height],
+                                        egui::Label::new(
+                                            egui::RichText::new(&date_text).color(text_color),
+                                        )
+                                        .sense(egui::Sense::click()),
+                                    );
+                                    name_resp | path_resp | size_resp | date_resp
+                                }).inner;
+
+                                if row_resp.clicked() {
                                     clicked_id = Some(entry_id);
                                     let _ = open_file_default(&entry_path);
                                 }
 
-                                if response.secondary_clicked() {
+                                if row_resp.secondary_clicked() {
                                     clicked_id = Some(entry_id);
                                 }
 
                                 // Built-in In-App Context Menu via egui (Dijamin 100% responsif & lancar)
-                                response.context_menu(|ui| {
-                                    ui.set_min_width(180.0);
+                                row_resp.context_menu(|ui| {
+                                    ui.set_min_width(220.0);
                                     if ui.button("🚀 Open File").clicked() {
                                         let _ = open_file_default(&entry_path);
                                         ui.close_menu();
@@ -443,49 +541,14 @@ impl eframe::App for MagnoliaApp {
                                         ui.close_menu();
                                     }
                                     ui.separator();
+                                    if ui.button("🌐 Windows Context Menu (System)").clicked() {
+                                        magnolia::context_menu::show_native_context_menu(&entry_path);
+                                        ui.close_menu();
+                                    }
                                     if ui.button("ℹ️ Properties").clicked() {
                                         let _ = open_file_properties(&entry_path);
                                         ui.close_menu();
                                     }
-                                });
-
-                                let text_color = if is_selected {
-                                    ui.visuals().selection.stroke.color
-                                } else {
-                                    ui.visuals().text_color()
-                                };
-
-                                // Render elemen kolom sejajar persis dengan ukuran header
-                                ui.allocate_new_ui(egui::UiBuilder::new().max_rect(row_rect), |ui| {
-                                    ui.horizontal(|ui| {
-                                        ui.spacing_mut().item_spacing.x = spacing;
-                                        ui.add_sized(
-                                            [name_width, row_height],
-                                            egui::Label::new(
-                                                egui::RichText::new(&name_text).color(text_color),
-                                            )
-                                            .truncate(),
-                                        );
-                                        ui.add_sized(
-                                            [path_width, row_height],
-                                            egui::Label::new(
-                                                egui::RichText::new(&entry_path).color(text_color),
-                                            )
-                                            .truncate(),
-                                        );
-                                        ui.add_sized(
-                                            [size_width, row_height],
-                                            egui::Label::new(
-                                                egui::RichText::new(&size_text).color(text_color),
-                                            ),
-                                        );
-                                        ui.add_sized(
-                                            [date_width, row_height],
-                                            egui::Label::new(
-                                                egui::RichText::new(&date_text).color(text_color),
-                                            ),
-                                        );
-                                    });
                                 });
                             }
                         }
